@@ -1,0 +1,37 @@
+{
+  "engine": "proprietary",
+  "description": "Overwatch 2 \u2014 maximize FPS for competitive play",
+  "settings": {
+    "AntiAliasingMethod": "FXAA",
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Off"
+    },
+    "TextureQuality": {
+      "ultra": "2",
+      "high": "2",
+      "medium": "1",
+      "low": "1"
+    },
+    "HighPrecisionRaymarching": {
+      "ultra": "On",
+      "high": "On",
+      "medium": "Off",
+      "low": "Off"
+    },
+    "RenderScale": {
+      "ultra": "100",
+      "high": "85",
+      "medium": "75",
+      "low": "65"
+    },
+    "ReflexEnable": {
+      "ultra": "2",
+      "high": "2",
+      "medium": "1",
+      "low": "1"
+    }
+  }
+}

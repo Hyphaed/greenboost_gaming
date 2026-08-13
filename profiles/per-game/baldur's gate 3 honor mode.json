@@ -1,0 +1,25 @@
+{
+  "engine": "vulkan",
+  "description": "BG3 Honor Mode \u2014 same as base, maximize FPS large fights",
+  "settings": {
+    "FSR": {
+      "ultra": "Balanced",
+      "high": "Performance",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "FrameGeneration": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "ShadowQuality": {
+      "ultra": "High",
+      "high": "Medium",
+      "medium": "Low",
+      "low": "Low"
+    },
+    "MotionBlur": "false"
+  }
+}

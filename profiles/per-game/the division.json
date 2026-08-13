@@ -1,0 +1,13 @@
+{
+  "engine": "snowdrop",
+  "description": "The Division \u2014 Snowdrop engine, smooth shooter",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "MotionBlur": "false"
+  }
+}

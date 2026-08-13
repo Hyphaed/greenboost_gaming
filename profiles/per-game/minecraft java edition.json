@@ -1,0 +1,37 @@
+{
+  "engine": "custom",
+  "description": "Minecraft Java \u2014 maximize FPS with Sodium/Iris",
+  "settings": {
+    "renderDistance": {
+      "ultra": "16",
+      "high": "12",
+      "medium": "8",
+      "low": "6"
+    },
+    "simulationDistance": {
+      "ultra": "12",
+      "high": "10",
+      "medium": "8",
+      "low": "6"
+    },
+    "maxFps": "260",
+    "graphicsMode": {
+      "ultra": "Fabulous",
+      "high": "Fancy",
+      "medium": "Fancy",
+      "low": "Fast"
+    },
+    "entityShadows": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "clouds": {
+      "ultra": "Fancy",
+      "high": "Fast",
+      "medium": "Off",
+      "low": "Off"
+    }
+  }
+}

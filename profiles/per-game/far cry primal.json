@@ -1,0 +1,13 @@
+{
+  "engine": "dunia",
+  "description": "Far Cry Primal \u2014 Dunia engine",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "MotionBlur": "false"
+  }
+}

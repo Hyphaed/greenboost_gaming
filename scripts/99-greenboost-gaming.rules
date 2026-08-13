@@ -1,0 +1,20 @@
+# GreenBoost Gaming Suite , udev rule
+#
+# greenboost.ko ships its `gaming_mode` module parameter as root-only
+# (module_param(gaming_mode, int, 0644) in greenboost.c , see the sibling
+# greenboost repo). GreenBoost Proton (greenboost_proton/proton) writes this
+# parameter as the invoking (non-root) user to tell the kernel module a game
+# is active, so inference T2 buffers get evicted ahead of gaming VRAM. Without
+# group write access that write always fails silently.
+#
+# Scoped to the 'greenboost' group (created by install.sh), not world-writable.
+#
+# Fires when the module loads. For a module already loaded at install time,
+# see greenboost-gaming.tmpfiles.conf, which covers that case once at boot
+# (and install.sh applies both immediately, no reboot required).
+#
+# Install to: /etc/udev/rules.d/99-greenboost-gaming.rules
+
+SUBSYSTEM=="module", KERNEL=="greenboost", ACTION=="add", \
+    RUN+="/bin/chgrp greenboost /sys/module/greenboost/parameters/gaming_mode", \
+    RUN+="/bin/chmod 0664 /sys/module/greenboost/parameters/gaming_mode"

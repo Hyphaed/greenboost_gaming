@@ -1,0 +1,36 @@
+{
+  "engine": "custom",
+  "description": "Age of Empires IV \u2014 Essence engine, smooth large battles",
+  "settings": {
+    "HighQualityTextures": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "UltraQualityTextures": {
+      "ultra": "true",
+      "high": "false",
+      "medium": "false",
+      "low": "false"
+    },
+    "MaxTextureQuality": {
+      "ultra": "4",
+      "high": "3",
+      "medium": "2",
+      "low": "1"
+    },
+    "ReflectionQuality": {
+      "ultra": "3",
+      "high": "2",
+      "medium": "1",
+      "low": "0"
+    },
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    }
+  }
+}

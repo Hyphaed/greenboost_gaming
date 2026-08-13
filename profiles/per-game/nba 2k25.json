@@ -1,0 +1,19 @@
+{
+  "engine": "custom",
+  "description": "NBA 2K25 \u2014 stable 60 FPS performance",
+  "settings": {
+    "TextureQuality": {
+      "ultra": "2",
+      "high": "2",
+      "medium": "1",
+      "low": "1"
+    },
+    "ShadowQuality": {
+      "ultra": "High",
+      "high": "Medium",
+      "medium": "Low",
+      "low": "Off"
+    },
+    "MotionBlur": "false"
+  }
+}

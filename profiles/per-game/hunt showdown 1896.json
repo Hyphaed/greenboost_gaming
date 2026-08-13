@@ -1,0 +1,34 @@
+{
+  "engine": "cryengine",
+  "description": "Hunt Showdown 1896 \u2014 CryEngine 5.11, DLSS 3 + Frame Gen",
+  "settings": {
+    "r_MotionBlur": "0",
+    "r_VSync": "0",
+    "r_AntiAliasMode": "3",
+    "r_ShadowsMaxTexRes": {
+      "ultra": "2048",
+      "high": "1024",
+      "medium": "512",
+      "low": "256"
+    },
+    "sys_MaxFPS": "0",
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "FrameGeneration": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "ReflexMode": {
+      "ultra": "enabled+boost",
+      "high": "enabled+boost",
+      "medium": "enabled",
+      "low": "enabled"
+    }
+  }
+}

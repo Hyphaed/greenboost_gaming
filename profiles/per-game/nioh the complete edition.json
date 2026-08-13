@@ -1,0 +1,13 @@
+{
+  "engine": "custom",
+  "description": "Nioh \u2014 smooth 120 FPS action",
+  "settings": {
+    "MaxFrameRate": "120",
+    "ShadowQuality": {
+      "ultra": "High",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    }
+  }
+}

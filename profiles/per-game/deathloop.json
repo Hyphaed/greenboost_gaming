@@ -1,0 +1,19 @@
+{
+  "engine": "custom",
+  "description": "Deathloop \u2014 custom engine, DLSS 2",
+  "settings": {
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "MotionBlur": "false"
+  }
+}

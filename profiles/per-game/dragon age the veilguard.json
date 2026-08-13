@@ -1,0 +1,44 @@
+{
+  "engine": "frostbite",
+  "description": "Dragon Age: The Veilguard \u2014 Frostbite, DLSS 3 + Frame Gen",
+  "settings": {
+    "GstRender.Dx12Enabled": "1",
+    "GstRender.MotionBlurEnable": "false",
+    "GstRender.ShadowmapResolution": {
+      "ultra": "2048",
+      "high": "1024",
+      "medium": "512",
+      "low": "256"
+    },
+    "GstRender.DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "GstRender.RaytracingEnable": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "GstRender.RaytracingShadowsEnable": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "GstRender.FrameGeneration": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "GstRender.Reflex": {
+      "ultra": "enabled",
+      "high": "enabled",
+      "medium": "enabled",
+      "low": "disabled"
+    }
+  }
+}

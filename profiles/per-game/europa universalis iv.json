@@ -1,0 +1,13 @@
+{
+  "engine": "clausewitz",
+  "description": "Europa Universalis IV \u2014 late-game optimization",
+  "settings": {
+    "shadows": "yes",
+    "shadowSize": {
+      "ultra": "2048",
+      "high": "1024",
+      "medium": "512",
+      "low": "256"
+    }
+  }
+}

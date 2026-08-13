@@ -1,0 +1,19 @@
+{
+  "engine": "clausewitz",
+  "description": "Hearts of Iron IV \u2014 smooth campaign performance",
+  "settings": {
+    "shadows": "yes",
+    "shadowSize": {
+      "ultra": "2048",
+      "high": "1024",
+      "medium": "512",
+      "low": "256"
+    },
+    "bloom": {
+      "ultra": "yes",
+      "high": "yes",
+      "medium": "no",
+      "low": "no"
+    }
+  }
+}

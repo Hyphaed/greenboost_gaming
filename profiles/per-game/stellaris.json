@@ -1,0 +1,19 @@
+{
+  "engine": "clausewitz",
+  "description": "Stellaris \u2014 smooth mid/late game performance",
+  "settings": {
+    "shadows": "yes",
+    "shadowSize": {
+      "ultra": "4096",
+      "high": "2048",
+      "medium": "1024",
+      "low": "512"
+    },
+    "bloom": {
+      "ultra": "yes",
+      "high": "yes",
+      "medium": "no",
+      "low": "no"
+    }
+  }
+}

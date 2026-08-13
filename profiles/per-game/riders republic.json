@@ -1,0 +1,12 @@
+{
+  "engine": "snowdrop",
+  "description": "Riders Republic \u2014 Snowdrop, smooth sports",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    }
+  }
+}

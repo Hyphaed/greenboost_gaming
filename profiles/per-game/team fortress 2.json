@@ -1,0 +1,12 @@
+{
+  "engine": "source",
+  "description": "TF2 \u2014 maximum FPS on aging Source engine",
+  "settings": {
+    "fps_max": "300",
+    "mat_queue_mode": "-1",
+    "r_dynamic": "0",
+    "r_maxdlights": "4",
+    "r_shadows": "0",
+    "cl_new_impact_effects": "0"
+  }
+}

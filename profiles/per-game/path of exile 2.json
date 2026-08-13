@@ -1,0 +1,31 @@
+{
+  "engine": "custom",
+  "description": "Path of Exile 2 \u2014 custom engine, smooth performance at high density",
+  "settings": {
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "ShadowQuality": {
+      "ultra": "High",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "DynamicResolution": {
+      "ultra": "false",
+      "high": "false",
+      "medium": "true",
+      "low": "true"
+    },
+    "ParticleQuality": {
+      "ultra": "High",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "MotionBlur": "false"
+  }
+}

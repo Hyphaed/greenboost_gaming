@@ -1,0 +1,14 @@
+{
+  "engine": "frostbite",
+  "description": "Battlefield 1 \u2014 Frostbite 3, classic settings",
+  "settings": {
+    "GstRender.Dx12Enabled": "1",
+    "GstRender.MotionBlurEnable": "false",
+    "GstRender.ShadowmapResolution": {
+      "ultra": "2048",
+      "high": "1024",
+      "medium": "512",
+      "low": "256"
+    }
+  }
+}

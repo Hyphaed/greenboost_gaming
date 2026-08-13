@@ -1,0 +1,19 @@
+{
+  "engine": "void",
+  "description": "Dishonored 2 \u2014 Void engine, smooth immersive sim",
+  "settings": {
+    "r_ssdo": {
+      "ultra": "2",
+      "high": "1",
+      "medium": "0",
+      "low": "0"
+    },
+    "r_MotionBlur": "0",
+    "r_shadowDistance": {
+      "ultra": "8000",
+      "high": "6000",
+      "medium": "4000",
+      "low": "2000"
+    }
+  }
+}

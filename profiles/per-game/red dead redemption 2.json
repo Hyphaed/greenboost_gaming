@@ -1,0 +1,38 @@
+{
+  "engine": "rage",
+  "description": "Red Dead Redemption 2 \u2014 RAGE engine, DLSS 3",
+  "settings": {
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "TAA_SHARPENING_ENABLED": "true",
+    "VolumetricRaymarchResolution": {
+      "ultra": "1.0",
+      "high": "0.75",
+      "medium": "0.5",
+      "low": "0.25"
+    },
+    "SHADOW_QUALITY": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "WATER_REFLECTION_QUALITY": {
+      "ultra": "4",
+      "high": "3",
+      "medium": "2",
+      "low": "1"
+    },
+    "ambientOcclusion": {
+      "ultra": "HBAO+",
+      "high": "SSAO",
+      "medium": "SSAO",
+      "low": "Off"
+    },
+    "motionblur": "false"
+  }
+}

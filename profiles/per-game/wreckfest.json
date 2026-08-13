@@ -1,0 +1,24 @@
+{
+  "engine": "bugbear",
+  "description": "Wreckfest \u2014 Bugbear engine, smooth destruction racing",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "TextureQuality": {
+      "ultra": "4",
+      "high": "3",
+      "medium": "2",
+      "low": "1"
+    },
+    "AntiAliasing": {
+      "ultra": "TAA",
+      "high": "TAA",
+      "medium": "FXAA",
+      "low": "Off"
+    }
+  }
+}

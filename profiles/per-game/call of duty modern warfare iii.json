@@ -1,0 +1,31 @@
+{
+  "engine": "iw",
+  "description": "Call of Duty MWIII \u2014 IW engine, DLSS 3 + Frame Gen",
+  "settings": {
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "FrameGeneration": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "ReflexMode": {
+      "ultra": "enabled+boost",
+      "high": "enabled+boost",
+      "medium": "enabled",
+      "low": "enabled"
+    },
+    "ShadowMap": {
+      "ultra": "Extra",
+      "high": "High",
+      "medium": "Normal",
+      "low": "Low"
+    },
+    "MotionBlur": "0"
+  }
+}

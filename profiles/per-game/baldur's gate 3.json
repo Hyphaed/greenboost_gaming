@@ -1,0 +1,39 @@
+{
+  "engine": "vulkan",
+  "description": "Baldur's Gate 3 \u2014 Divinity 4.0 engine, FSR 3 + Frame Gen",
+  "settings": {
+    "FSR": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "FrameGeneration": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "TextureQuality": {
+      "ultra": "4",
+      "high": "3",
+      "medium": "2",
+      "low": "1"
+    },
+    "SSR": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "DepthOfField": "false",
+    "MotionBlur": "false",
+    "VSync": "false"
+  }
+}

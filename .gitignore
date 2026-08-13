@@ -1,0 +1,69 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.cache/
+.mcp-cache/
+
+# Vulkan layer build artifact
+/libVkLayer_greenboost.so
+
+# OpenGL layer build artifact (WIP)
+/libgb_gl.so
+
+# NIS SPIR-V outputs
+/build/*.spv
+
+# Tauri / Vite build output
+/src/dist/
+/src/node_modules/
+/src/src-tauri/target/
+
+# TurboQuant build (parent-repo concern; if it ever returns here, add a tq: target first)
+/lib/**/*.so
+/lib/**/*.o
+
+# Runtime drop-dirs (filled on demand, not source)
+/cache/
+
+# Optional user-built offline DLSS bundle , see DLSS_UPDATER.md.
+# Never committed: these are NVIDIA-authored binaries under the
+# Developer Program EULA, not part of this project.
+/dlls/
+
+# NVIDIA DLSS / Streamline DLLs , runtime cache, never committed.
+# Fetched on demand by "Update DLSS" from NVIDIA's official GitHub
+# repositories. The live cache is ~/.local/share/greenboost-gaming/libraries/;
+# this directory only holds README.md + an empty manifest in a fresh clone.
+/libraries/*.dll
+/libraries/versions/
+/libraries/manifest.json
+
+# uv / pip build artefacts
+/dist/
+/*.egg-info/
+
+# AI assistant local context , never commit (use local CLAUDE.md only)
+CLAUDE.md
+MEMORY.md
+memory/
+.claude/
+.claude-sessions/
+.claude_*
+*.claude.md
+workflow/
+skills_needed.md
+STALE_FILES.md
+AUDIT_*.md
+.mcp.json
+*.local.json
+
+# Internal working notes , not for publication
+enhance_gaming.md
+greenboost_gaming_polish.md
+amd_vram_oversubscription_audit.md
+what_greenboost_proton_does.md
+
+# hyperresearch (per-project research vault)
+.hyperresearch/
+research/

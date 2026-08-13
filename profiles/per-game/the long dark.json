@@ -1,0 +1,21 @@
+{
+  "engine": "unity",
+  "description": "The Long Dark \u2014 Unity, survival optimization",
+  "settings": {
+    "targetFrameRate": "-1",
+    "vSyncCount": "0",
+    "shadowDistance": {
+      "ultra": "150",
+      "high": "100",
+      "medium": "75",
+      "low": "50"
+    },
+    "shadowCascades": {
+      "ultra": "4",
+      "high": "4",
+      "medium": "2",
+      "low": "1"
+    },
+    "antiAliasing": "0"
+  }
+}

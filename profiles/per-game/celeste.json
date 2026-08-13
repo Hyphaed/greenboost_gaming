@@ -1,0 +1,7 @@
+{
+  "engine": "custom",
+  "description": "Celeste \u2014 consistent 60 FPS for precision platforming",
+  "settings": {
+    "VSync": "false"
+  }
+}

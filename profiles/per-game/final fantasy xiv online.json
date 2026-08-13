@@ -1,0 +1,31 @@
+{
+  "engine": "custom",
+  "description": "Final Fantasy XIV \u2014 custom engine, maximize stability",
+  "settings": {
+    "AntiAliasing": {
+      "ultra": "DLSS",
+      "high": "TAA",
+      "medium": "TAA",
+      "low": "FXAA"
+    },
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "Off"
+    },
+    "ShadowLOD": {
+      "ultra": "2",
+      "high": "1",
+      "medium": "0",
+      "low": "0"
+    },
+    "WaterWetEffects": {
+      "ultra": "2",
+      "high": "1",
+      "medium": "0",
+      "low": "0"
+    },
+    "TextureAnisotropicQuality": "16"
+  }
+}

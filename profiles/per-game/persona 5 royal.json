@@ -1,0 +1,14 @@
+{
+  "engine": "custom",
+  "description": "Persona 5 Royal \u2014 60 FPS stable, upscaling off",
+  "settings": {
+    "AntiAliasing": "FXAA",
+    "ShadowQuality": {
+      "ultra": "High",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "MotionBlur": "false"
+  }
+}

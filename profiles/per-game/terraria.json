@@ -1,0 +1,13 @@
+{
+  "engine": "custom",
+  "description": "Terraria \u2014 frame rate uncapped",
+  "settings": {
+    "FrameSkip": "false",
+    "LightingMode": {
+      "ultra": "Color",
+      "high": "Color",
+      "medium": "White",
+      "low": "Retro"
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "engine": "custom",
+  "description": "Stardew Valley \u2014 smooth 60 FPS",
+  "settings": {
+    "AlwaysShowToolHitLocation": "true"
+  }
+}

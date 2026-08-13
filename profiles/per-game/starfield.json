@@ -1,0 +1,38 @@
+{
+  "engine": "creation engine 2",
+  "description": "Starfield \u2014 Creation Engine 2, FSR 3 Frame Gen",
+  "settings": {
+    "FSR": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "FrameGeneration": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "bEnableDepthOfField": "0",
+    "bMotionBlur": "0",
+    "uGridsToLoad": {
+      "ultra": "10",
+      "high": "8",
+      "medium": "6",
+      "low": "4"
+    },
+    "iShadowMapResolution": {
+      "ultra": "4096",
+      "high": "2048",
+      "medium": "1024",
+      "low": "512"
+    },
+    "fShadowDistance": {
+      "ultra": "20000",
+      "high": "15000",
+      "medium": "10000",
+      "low": "5000"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "engine": "dragon",
+  "description": "Yakuza: Like a Dragon \u2014 Dragon engine, smooth",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "MotionBlur": "false"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "engine": "unity",
+  "description": "7 Days to Die \u2014 Unity, smooth zombie survival",
+  "settings": {
+    "targetFrameRate": "-1",
+    "vSyncCount": "0",
+    "shadowDistance": {
+      "ultra": "200",
+      "high": "150",
+      "medium": "100",
+      "low": "50"
+    },
+    "shadowCascades": {
+      "ultra": "4",
+      "high": "4",
+      "medium": "2",
+      "low": "1"
+    },
+    "antiAliasing": "0",
+    "LODBias": {
+      "ultra": "2",
+      "high": "1.5",
+      "medium": "1",
+      "low": "0.5"
+    }
+  }
+}

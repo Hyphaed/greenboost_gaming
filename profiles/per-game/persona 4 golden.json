@@ -1,0 +1,13 @@
+{
+  "engine": "custom",
+  "description": "Persona 4 Golden \u2014 stable 60 FPS",
+  "settings": {
+    "AntiAliasing": "FXAA",
+    "ShadowQuality": {
+      "ultra": "High",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    }
+  }
+}

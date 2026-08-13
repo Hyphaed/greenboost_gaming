@@ -1,0 +1,24 @@
+{
+  "engine": "id tech 7",
+  "description": "DOOM Eternal \u2014 id Tech 7, maximize FPS uncapped",
+  "settings": {
+    "com_skipIntroVideo": "1",
+    "r_syncFlush": "0",
+    "image_anisotropy": "16",
+    "r_shadowAtlasSize": {
+      "ultra": "4096",
+      "high": "2048",
+      "medium": "1024",
+      "low": "512"
+    },
+    "r_useShadowCaching": "1",
+    "r_renderScale": {
+      "ultra": "2",
+      "high": "1",
+      "medium": "1",
+      "low": "0"
+    },
+    "r_frameratecap": "0",
+    "r_antialiasing": "1"
+  }
+}

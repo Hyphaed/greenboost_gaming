@@ -1,0 +1,26 @@
+{
+  "engine": "frostbite",
+  "description": "EA Sports FC 25 \u2014 Frostbite 3.3, stable 60+ FPS",
+  "settings": {
+    "GstRender.Dx12Enabled": "1",
+    "GstRender.MotionBlurEnable": "false",
+    "GstRender.ShadowmapResolution": {
+      "ultra": "2048",
+      "high": "1024",
+      "medium": "512",
+      "low": "256"
+    },
+    "GstRender.DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "GstRender.FrameGeneration": {
+      "ultra": "false",
+      "high": "false",
+      "medium": "false",
+      "low": "false"
+    }
+  }
+}

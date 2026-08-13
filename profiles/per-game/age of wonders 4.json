@@ -1,0 +1,24 @@
+{
+  "engine": "custom",
+  "description": "Age of Wonders 4 \u2014 smooth 4X gameplay",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "TextureQuality": {
+      "ultra": "4",
+      "high": "3",
+      "medium": "2",
+      "low": "1"
+    },
+    "AntiAliasing": {
+      "ultra": "TAA",
+      "high": "TAA",
+      "medium": "FXAA",
+      "low": "FXAA"
+    }
+  }
+}

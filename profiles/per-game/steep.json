@@ -1,0 +1,13 @@
+{
+  "engine": "custom",
+  "description": "Steep \u2014 Snowdrop, smooth winter sports",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "MotionBlur": "false"
+  }
+}

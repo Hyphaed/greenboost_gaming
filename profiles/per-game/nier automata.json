@@ -1,0 +1,19 @@
+{
+  "engine": "platinum",
+  "description": "NieR: Automata \u2014 smooth 60 FPS, FAR mod compatible",
+  "settings": {
+    "ShadowMapResolution": {
+      "ultra": "4096",
+      "high": "2048",
+      "medium": "1024",
+      "low": "512"
+    },
+    "AntiAliasing": "FXAA",
+    "ShadowDistance": {
+      "ultra": "200",
+      "high": "150",
+      "medium": "100",
+      "low": "50"
+    }
+  }
+}

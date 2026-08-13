@@ -1,0 +1,18 @@
+{
+  "engine": "cryengine",
+  "description": "Kingdom Come: Deliverance \u2014 CryEngine 5, smooth 60 FPS",
+  "settings": {
+    "r_MotionBlur": "0",
+    "r_VSync": "0",
+    "r_AntiAliasMode": "3",
+    "r_ShadowsMaxTexRes": {
+      "ultra": "2048",
+      "high": "1024",
+      "medium": "512",
+      "low": "256"
+    },
+    "sys_MaxFPS": "0",
+    "r_ShadowBlur": "2",
+    "r_SSDO": "1"
+  }
+}

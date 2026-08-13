@@ -1,0 +1,31 @@
+{
+  "engine": "cobra",
+  "description": "Elite Dangerous \u2014 Cobra engine, smooth space flight",
+  "settings": {
+    "SuperSampling": "1",
+    "AntiAliasing": {
+      "ultra": "SMAA2TX",
+      "high": "SMAA2TX",
+      "medium": "SMAA",
+      "low": "FXAA"
+    },
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "TextureQuality": {
+      "ultra": "4",
+      "high": "3",
+      "medium": "2",
+      "low": "1"
+    },
+    "AmbientOcclusion": {
+      "ultra": "HBAO+",
+      "high": "SSAO",
+      "medium": "SSAO",
+      "low": "Off"
+    }
+  }
+}

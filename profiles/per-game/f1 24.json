@@ -1,0 +1,25 @@
+{
+  "engine": "ego",
+  "description": "F1 24 \u2014 EGO engine, smooth race performance",
+  "settings": {
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "TextureQuality": {
+      "ultra": "4",
+      "high": "3",
+      "medium": "2",
+      "low": "1"
+    },
+    "MotionBlur": "false"
+  }
+}

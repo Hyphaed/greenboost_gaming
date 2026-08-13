@@ -1,0 +1,14 @@
+{
+  "engine": "frostbite",
+  "description": "Star Wars Battlefront II \u2014 Frostbite 3",
+  "settings": {
+    "GstRender.Dx12Enabled": "1",
+    "GstRender.MotionBlurEnable": "false",
+    "GstRender.ShadowmapResolution": {
+      "ultra": "2048",
+      "high": "1024",
+      "medium": "512",
+      "low": "256"
+    }
+  }
+}

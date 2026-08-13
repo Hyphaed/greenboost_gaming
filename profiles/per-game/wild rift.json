@@ -1,0 +1,13 @@
+{
+  "engine": "custom",
+  "description": "League of Legends: Wild Rift \u2014 smooth mobile port",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "High",
+      "high": "Medium",
+      "medium": "Low",
+      "low": "Off"
+    },
+    "FrameRate": "60"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "engine": "frostbite",
+  "description": "Battlefield V \u2014 Frostbite 3.2, DXR Ray Tracing",
+  "settings": {
+    "GstRender.Dx12Enabled": "1",
+    "GstRender.MotionBlurEnable": "false",
+    "GstRender.ShadowmapResolution": {
+      "ultra": "2048",
+      "high": "1024",
+      "medium": "512",
+      "low": "256"
+    },
+    "GstRender.DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "GstRender.RaytracingEnable": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "GstRender.RaytracingShadowsEnable": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "GstRender.DXREnabled": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    }
+  }
+}

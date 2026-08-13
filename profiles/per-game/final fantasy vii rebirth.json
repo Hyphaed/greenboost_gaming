@@ -1,0 +1,71 @@
+{
+  "engine": "unreal",
+  "description": "FF7 Rebirth \u2014 UE4, DLSS 3 + Frame Gen",
+  "settings": {
+    "r.MotionBlurQuality": "0",
+    "r.ScreenPercentage": "100",
+    "r.ShaderPipelineCache.Enabled": "1",
+    "r.Streaming.PoolSize": "2048",
+    "r.TextureStreaming": "1",
+    "sg.ShadowQuality": {
+      "ultra": "3",
+      "high": "2",
+      "medium": "1",
+      "low": "0"
+    },
+    "sg.PostProcessQuality": {
+      "ultra": "3",
+      "high": "2",
+      "medium": "1",
+      "low": "0"
+    },
+    "sg.EffectsQuality": {
+      "ultra": "3",
+      "high": "2",
+      "medium": "1",
+      "low": "0"
+    },
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "FrameGenerationEnable": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "r.RayTracing": {
+      "ultra": "1",
+      "high": "1",
+      "medium": "0",
+      "low": "0"
+    },
+    "r.RayTracing.Shadows": {
+      "ultra": "1",
+      "high": "1",
+      "medium": "0",
+      "low": "0"
+    },
+    "r.RayTracing.Reflections": {
+      "ultra": "1",
+      "high": "0",
+      "medium": "0",
+      "low": "0"
+    },
+    "r.RayTracing.AmbientOcclusion": {
+      "ultra": "1",
+      "high": "1",
+      "medium": "0",
+      "low": "0"
+    },
+    "ReflexEnable": {
+      "ultra": "2",
+      "high": "2",
+      "medium": "1",
+      "low": "1"
+    }
+  }
+}

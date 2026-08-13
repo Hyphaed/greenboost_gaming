@@ -1,0 +1,19 @@
+{
+  "engine": "chrome",
+  "description": "Dying Light \u2014 C-Engine, maximize FPS open world parkour",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "High",
+      "high": "Medium",
+      "medium": "Low",
+      "low": "Off"
+    },
+    "MotionBlur": "0",
+    "TextureQuality": {
+      "ultra": "4",
+      "high": "3",
+      "medium": "2",
+      "low": "1"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "engine": "quantic dream",
+  "description": "Detroit: Become Human \u2014 Quantic Dream engine",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "MotionBlur": "false",
+    "TextureQuality": {
+      "ultra": "4",
+      "high": "3",
+      "medium": "2",
+      "low": "1"
+    }
+  }
+}

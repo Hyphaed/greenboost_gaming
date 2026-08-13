@@ -1,0 +1,25 @@
+{
+  "engine": "source2",
+  "description": "Half-Life: Alyx \u2014 VR-optimized Source 2 settings",
+  "settings": {
+    "mat_queue_mode": "-1",
+    "r_queued_decals": "1",
+    "r_shadowrendertotexture": "1",
+    "r_flashlightdepthtexture": "1",
+    "fps_max": "0",
+    "r_drawparticles": {
+      "ultra": "1",
+      "high": "1",
+      "medium": "1",
+      "low": "0"
+    },
+    "r_waterreflections": {
+      "ultra": "1",
+      "high": "1",
+      "medium": "0",
+      "low": "0"
+    },
+    "vr_msaa": "0",
+    "hlvr_continuous_normal_speed": "220"
+  }
+}

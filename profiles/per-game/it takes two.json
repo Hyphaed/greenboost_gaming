@@ -1,0 +1,29 @@
+{
+  "engine": "unreal",
+  "description": "It Takes Two \u2014 UE4, smooth co-op platformer",
+  "settings": {
+    "r.MotionBlurQuality": "0",
+    "r.ScreenPercentage": "100",
+    "r.ShaderPipelineCache.Enabled": "1",
+    "r.Streaming.PoolSize": "2048",
+    "r.TextureStreaming": "1",
+    "sg.ShadowQuality": {
+      "ultra": "3",
+      "high": "2",
+      "medium": "1",
+      "low": "0"
+    },
+    "sg.PostProcessQuality": {
+      "ultra": "3",
+      "high": "2",
+      "medium": "1",
+      "low": "0"
+    },
+    "sg.EffectsQuality": {
+      "ultra": "3",
+      "high": "2",
+      "medium": "1",
+      "low": "0"
+    }
+  }
+}

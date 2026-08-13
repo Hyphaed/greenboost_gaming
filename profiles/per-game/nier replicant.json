@@ -1,0 +1,13 @@
+{
+  "engine": "platinum",
+  "description": "NieR Replicant \u2014 smooth 60 FPS",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "MotionBlur": "false"
+  }
+}

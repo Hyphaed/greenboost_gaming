@@ -1,0 +1,13 @@
+{
+  "engine": "anvil next",
+  "description": "R6 Extraction \u2014 AnvilNext, DLSS 2",
+  "settings": {
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "MotionBlur": "false"
+  }
+}

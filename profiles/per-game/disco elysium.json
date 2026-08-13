@@ -1,0 +1,12 @@
+{
+  "engine": "custom",
+  "description": "Disco Elysium \u2014 smooth 60 FPS",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "High",
+      "high": "Medium",
+      "medium": "Low",
+      "low": "Off"
+    }
+  }
+}

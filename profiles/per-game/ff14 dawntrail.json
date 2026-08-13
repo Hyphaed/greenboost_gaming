@@ -1,0 +1,25 @@
+{
+  "engine": "custom",
+  "description": "Final Fantasy XIV: Dawntrail \u2014 updated engine, DLSS 3",
+  "settings": {
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "FrameGeneration": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "ShadowLOD": {
+      "ultra": "2",
+      "high": "1",
+      "medium": "0",
+      "low": "0"
+    },
+    "TextureAnisotropicQuality": "16"
+  }
+}

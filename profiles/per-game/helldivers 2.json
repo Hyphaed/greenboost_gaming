@@ -1,0 +1,31 @@
+{
+  "engine": "custom",
+  "description": "Helldivers 2 \u2014 Autodesk Stingray/custom, DLSS 3",
+  "settings": {
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "MotionBlur": "false",
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "TextureQuality": {
+      "ultra": "4",
+      "high": "3",
+      "medium": "2",
+      "low": "1"
+    },
+    "SSR": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    }
+  }
+}

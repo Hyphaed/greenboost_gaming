@@ -1,0 +1,31 @@
+{
+  "engine": "custom",
+  "description": "Total War Warhammer III \u2014 battle performance",
+  "settings": {
+    "aa_quality_level": {
+      "ultra": "2",
+      "high": "1",
+      "medium": "0",
+      "low": "0"
+    },
+    "shadows_quality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "texture_filtering_level": "3",
+    "tessellation_quality": {
+      "ultra": "2",
+      "high": "1",
+      "medium": "0",
+      "low": "0"
+    },
+    "ssao_level": {
+      "ultra": "1",
+      "high": "1",
+      "medium": "0",
+      "low": "0"
+    }
+  }
+}

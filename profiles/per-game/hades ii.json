@@ -1,0 +1,8 @@
+{
+  "engine": "custom",
+  "description": "Hades II \u2014 smooth 60 FPS",
+  "settings": {
+    "Vsync": "false",
+    "MaxFPS": "240"
+  }
+}

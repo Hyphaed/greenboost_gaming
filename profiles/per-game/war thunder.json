@@ -1,0 +1,30 @@
+{
+  "engine": "dagor",
+  "description": "War Thunder \u2014 Dagor engine, smooth combat",
+  "settings": {
+    "shadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "textureQuality": {
+      "ultra": "4",
+      "high": "3",
+      "medium": "2",
+      "low": "1"
+    },
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "antialiasingMode": {
+      "ultra": "DLSS",
+      "high": "DLSS",
+      "medium": "DLSS",
+      "low": "TAA"
+    }
+  }
+}

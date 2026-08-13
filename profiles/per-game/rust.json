@@ -1,0 +1,40 @@
+{
+  "engine": "unity",
+  "description": "Rust \u2014 Unity3D, maximize FPS in high-pop servers",
+  "settings": {
+    "targetFrameRate": "-1",
+    "vSyncCount": "0",
+    "shadowDistance": {
+      "ultra": "200",
+      "high": "150",
+      "medium": "100",
+      "low": "50"
+    },
+    "shadowCascades": {
+      "ultra": "4",
+      "high": "4",
+      "medium": "2",
+      "low": "1"
+    },
+    "antiAliasing": "0",
+    "DLSS": {
+      "ultra": "Balanced",
+      "high": "Performance",
+      "medium": "UltraPerformance",
+      "low": "UltraPerformance"
+    },
+    "grassDisplacement": "false",
+    "objectQuality": {
+      "ultra": "100",
+      "high": "75",
+      "medium": "50",
+      "low": "25"
+    },
+    "terrainQuality": {
+      "ultra": "100",
+      "high": "75",
+      "medium": "50",
+      "low": "25"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "engine": "custom",
+  "description": "Total War: Three Kingdoms \u2014 battle performance",
+  "settings": {
+    "shadows_quality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "texture_filtering_level": "3",
+    "ssao_level": {
+      "ultra": "1",
+      "high": "1",
+      "medium": "0",
+      "low": "0"
+    }
+  }
+}

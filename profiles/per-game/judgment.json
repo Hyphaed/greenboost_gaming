@@ -1,0 +1,13 @@
+{
+  "engine": "dragon",
+  "description": "Judgment \u2014 Dragon engine, smooth detective action",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "MotionBlur": "false"
+  }
+}

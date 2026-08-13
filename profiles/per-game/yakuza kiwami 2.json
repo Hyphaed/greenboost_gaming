@@ -1,0 +1,13 @@
+{
+  "engine": "dragon",
+  "description": "Yakuza Kiwami 2 \u2014 Dragon engine",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "High",
+      "high": "Medium",
+      "medium": "Low",
+      "low": "Off"
+    },
+    "MotionBlur": "false"
+  }
+}

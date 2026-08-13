@@ -1,0 +1,25 @@
+{
+  "engine": "decima",
+  "description": "Horizon Forbidden West \u2014 Decima engine, DLSS 3",
+  "settings": {
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "MotionBlur": "false",
+    "RayTracing": {
+      "ultra": "true",
+      "high": "false",
+      "medium": "false",
+      "low": "false"
+    }
+  }
+}

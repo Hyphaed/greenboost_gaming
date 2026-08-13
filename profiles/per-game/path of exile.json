@@ -1,0 +1,25 @@
+{
+  "engine": "custom",
+  "description": "Path of Exile \u2014 custom engine, performance for endgame mapping",
+  "settings": {
+    "TextureQuality": {
+      "ultra": "2",
+      "high": "2",
+      "medium": "1",
+      "low": "0"
+    },
+    "ShadowQuality": {
+      "ultra": "High",
+      "high": "Medium",
+      "medium": "Low",
+      "low": "Off"
+    },
+    "EffectsQuality": {
+      "ultra": "High",
+      "high": "Medium",
+      "medium": "Low",
+      "low": "Very Low"
+    },
+    "FullscreenParticles": "false"
+  }
+}

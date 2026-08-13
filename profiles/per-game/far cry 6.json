@@ -1,0 +1,31 @@
+{
+  "engine": "dunia",
+  "description": "Far Cry 6 \u2014 Dunia engine, DLSS 2 + RT",
+  "settings": {
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "DXR_Shadows": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "DXR_Reflections": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "MotionBlur": "false",
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    }
+  }
+}

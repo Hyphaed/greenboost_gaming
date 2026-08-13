@@ -1,0 +1,24 @@
+{
+  "engine": "custom",
+  "description": "Black Desert Online \u2014 smooth MMO action",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "TextureQuality": {
+      "ultra": "4",
+      "high": "3",
+      "medium": "2",
+      "low": "1"
+    },
+    "DrawDistance": {
+      "ultra": "300",
+      "high": "200",
+      "medium": "150",
+      "low": "100"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "engine": "creation engine 2",
+  "description": "TES VI \u2014 Creation Engine 2, DLSS 4 (anticipated)",
+  "settings": {
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "FrameGeneration": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "iShadowMapResolution": {
+      "ultra": "4096",
+      "high": "2048",
+      "medium": "1024",
+      "low": "512"
+    },
+    "uGridsToLoad": {
+      "ultra": "10",
+      "high": "8",
+      "medium": "6",
+      "low": "4"
+    },
+    "bMotionBlur": "0"
+  }
+}

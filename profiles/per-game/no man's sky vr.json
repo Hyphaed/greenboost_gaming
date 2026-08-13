@@ -1,0 +1,18 @@
+{
+  "engine": "custom",
+  "description": "No Man's Sky VR \u2014 VR-optimized settings",
+  "settings": {
+    "VRResolution": {
+      "ultra": "1.5",
+      "high": "1.2",
+      "medium": "1.0",
+      "low": "0.8"
+    },
+    "ShadowQuality": {
+      "ultra": "High",
+      "high": "Medium",
+      "medium": "Low",
+      "low": "Off"
+    }
+  }
+}

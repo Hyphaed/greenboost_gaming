@@ -1,0 +1,13 @@
+{
+  "engine": "dunia",
+  "description": "Far Cry New Dawn \u2014 Dunia engine, smooth open world",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "MotionBlur": "false"
+  }
+}

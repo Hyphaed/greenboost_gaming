@@ -1,0 +1,18 @@
+{
+  "engine": "snowdrop",
+  "description": "Avatar: Pandora Rising \u2014 Snowdrop, DLSS 3",
+  "settings": {
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    }
+  }
+}

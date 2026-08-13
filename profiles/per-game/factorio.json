@@ -1,0 +1,9 @@
+{
+  "engine": "custom",
+  "description": "Factorio \u2014 CPU-bound, maximize thread utilization",
+  "settings": {
+    "max_threads": "8",
+    "compression_threads": "4",
+    "worker_threads": "4"
+  }
+}

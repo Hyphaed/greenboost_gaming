@@ -1,0 +1,36 @@
+{
+  "engine": "evolution",
+  "description": "Warframe \u2014 Evolution engine, smooth performance in missions",
+  "settings": {
+    "volumetricLighting": {
+      "ultra": "On",
+      "high": "On",
+      "medium": "Off",
+      "low": "Off"
+    },
+    "shadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "textureQuality": {
+      "ultra": "4",
+      "high": "3",
+      "medium": "2",
+      "low": "1"
+    },
+    "dynamicLighting": {
+      "ultra": "High",
+      "high": "Medium",
+      "medium": "Low",
+      "low": "Off"
+    },
+    "postProcessing": {
+      "ultra": "On",
+      "high": "On",
+      "medium": "On",
+      "low": "Off"
+    }
+  }
+}

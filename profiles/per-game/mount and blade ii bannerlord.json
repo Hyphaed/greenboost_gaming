@@ -1,0 +1,24 @@
+{
+  "engine": "custom",
+  "description": "Bannerlord \u2014 custom engine, large battles optimized",
+  "settings": {
+    "TextureQuality": {
+      "ultra": "4",
+      "high": "3",
+      "medium": "2",
+      "low": "1"
+    },
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "PerformancePreset": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    }
+  }
+}

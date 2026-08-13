@@ -1,0 +1,34 @@
+{
+  "engine": "cryengine",
+  "description": "Kingdom Come Deliverance II \u2014 CryEngine 5.11",
+  "settings": {
+    "r_MotionBlur": "0",
+    "r_VSync": "0",
+    "r_AntiAliasMode": "3",
+    "r_ShadowsMaxTexRes": {
+      "ultra": "2048",
+      "high": "1024",
+      "medium": "512",
+      "low": "256"
+    },
+    "sys_MaxFPS": "0",
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "FrameGeneration": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "r_RayTracing": {
+      "ultra": "1",
+      "high": "1",
+      "medium": "0",
+      "low": "0"
+    }
+  }
+}

@@ -1,0 +1,1091 @@
+@import "tailwindcss";
+
+/* ── Design tokens ────────────────────────────────────────────────────────── */
+/* PR-TTT: blacker palette matching the official NVIDIA app (System →
+   Displays screenshot).  Cooler whites kept for legibility; borders
+   dropped to near-charcoal so cards float on the deeper background. */
+@theme {
+  /* PR-YYY: pushed the palette to the deeper near-black NVIDIA Graphics
+     screenshot uses (sidebar #0d0d0d, content panel #181818).  Section
+     headers sit on a slightly raised band (#222) above the row stack. */
+  --color-sidebar:   #0d0d0d;
+  --color-bg:        #181818;
+  --color-card:      #1c1c1c;
+  --color-hover:     #262626;
+  --color-border:    #262626;
+  --color-divider:   #2a2a2a;
+  --color-gb:        #76b900;
+  --color-gb-hover:  #85d000;
+  --color-gb-dim:    rgba(118,185,0,0.12);
+  --color-primary:   #ffffff;
+  --color-secondary: #b3b3b3;
+  --color-muted:     #9a9ab0;
+  --color-amber:     #e8a000;
+  --color-red:       #e05252;
+}
+
+/* ── PR-YYY: Global Settings card (NVIDIA-style row list) ─────────────── */
+.gs-card {
+  margin: 18px 28px 0;
+  background: #1c1c1c;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.gs-card-header {
+  padding: 16px 24px;
+  background: #222222;
+  color: #ffffff;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.1px;
+}
+.gs-row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 18px 24px;
+  border-bottom: 1px solid #2d3038;
+}
+.gs-row:last-child { border-bottom: none; }
+.gs-row-label {
+  flex: 1;
+  min-width: 0;
+}
+.gs-row-title {
+  color: #e6e6e6;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.1px;
+}
+.gs-row-sub {
+  color: #9a9ab0;
+  font-size: 12px;
+  margin-top: 4px;
+  line-height: 1.5;
+}
+.gs-row-control {
+  flex: 0 0 auto;
+  min-width: 200px;
+  text-align: right;
+  color: #ffffff;
+}
+.gs-value-readonly {
+  color: #b3b3b3;
+  font-size: 13px;
+}
+/* PR-CCCC: single shared dropdown style, used by every <select> in the
+   app (Global Settings, Display panel, DLL picker).  Matches the
+   NVIDIA-app aesthetic , dark fill, subtle border, accent-green
+   focus ring, chevron via background-image so we don't need extra
+   markup.  `appearance: none` removes the OS-native arrow which
+   would otherwise sit awkwardly against the dark fill. */
+.gs-select,
+.gb-select {
+  background-color: #181818;
+  /* Inline SVG chevron , white #b3b3b3 to match secondary text. */
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23b3b3b3' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  color: #ffffff;
+  border: 1px solid #2e2e2e;
+  border-radius: 4px;
+  padding: 6px 28px 6px 10px;
+  font-size: 13px;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  min-width: 200px;
+}
+.gs-select:hover, .gb-select:hover { border-color: #3a3a3a; }
+.gs-select:focus, .gb-select:focus { border-color: #76b900; }
+.gs-select:disabled, .gb-select:disabled {
+  opacity: 0.5; cursor: not-allowed;
+}
+/* Compact number + text inputs for Advanced / frame-pacing rows. */
+.gs-input-num,
+.gs-input-text {
+  background: #181818;
+  color: #ffffff;
+  border: 1px solid #2e2e2e;
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 13px;
+  outline: none;
+}
+.gs-input-num  { width: 80px; text-align: right; }
+.gs-input-text { width: 140px; }
+.gs-input-num:focus,
+.gs-input-text:focus { border-color: #76b900; }
+
+/* Hide browser number-input spinners app-wide , they conflict with the dark theme. */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] { -moz-appearance: textfield; }
+
+/* ── Reset ────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  background: #1e2124;
+  color: #dde1e8;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Scrollbar ────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #333840; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #444c58; }
+
+/* ── App shell ────────────────────────────────────────────────────────────── */
+.app-shell {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  background: #1e2124;
+  overflow: hidden;
+}
+
+/* ── Sidebar ──────────────────────────────────────────────────────────────── */
+.sidebar {
+  width: 72px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: #1a1c1e;
+  border-right: 1px solid #2d3038;
+  padding: 12px 0;
+  z-index: 50;
+}
+
+.sidebar-logo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 0 16px;
+  margin-bottom: 4px;
+}
+
+.sidebar-logo-icon {
+  width: 28px;
+  height: 28px;
+  background: #76b900;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #000;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: -0.5px;
+}
+
+.sidebar-logo-dot {
+  width: 6px;
+  height: 6px;
+  background: #76b900;
+  border-radius: 50%;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  flex: 1;
+}
+
+.nav-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 4px;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: #8a9ab0;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  transition: color 0.15s, background 0.15s;
+  text-align: center;
+  border-left: 3px solid transparent;
+}
+
+.nav-item:hover {
+  color: #b0c0d0;
+  background: rgba(255,255,255,0.04);
+}
+
+.nav-item.active {
+  color: #76b900;
+  background: rgba(118,185,0,0.08);
+  border-left-color: #76b900;
+}
+
+.nav-item.active .nav-icon { color: #76b900; }
+
+/* ── Main content ─────────────────────────────────────────────────────────── */
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: #1e2124;
+  overflow: hidden;
+}
+
+.page-header {
+  height: 62px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 28px;
+  background: #1e2124;
+  border-bottom: 1px solid #2d3038;
+}
+
+.page-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #dde1e8;
+  letter-spacing: -0.01em;
+}
+
+.page-header-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #8a9ab0;
+  font-size: 11px;
+}
+
+.sub-nav {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 28px;
+  background: #1e2124;
+  border-bottom: 1px solid #2d3038;
+  flex-shrink: 0;
+}
+
+.sub-nav-tab {
+  padding: 12px 0;
+  margin-right: 28px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #8a9ab0;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+  background: none;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+  white-space: nowrap;
+}
+
+.sub-nav-tab:hover { color: #b0c0d0; }
+.sub-nav-tab.active { color: #dde1e8; border-bottom-color: #76b900; }
+
+/* ── Games layout ─────────────────────────────────────────────────────────── */
+.games-view {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Left panel */
+.games-list {
+  width: 290px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: #1a1c1e;
+  border-right: 1px solid #2d3038;
+  overflow: hidden;
+}
+
+.games-list-header {
+  display: flex;
+  align-items: center;
+  padding: 14px 16px;
+  border-bottom: 1px solid #2d3038;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.games-list-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: #dde1e8;
+  flex: 1;
+}
+
+.games-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.icon-btn {
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: #8a9ab0;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+}
+.icon-btn:hover { color: #b0c0d0; background: #2a2d35; }
+
+.games-list-scroll {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.game-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: background 0.12s, border-color 0.12s;
+  min-height: 56px;
+}
+
+.game-row:hover { background: #252830; }
+
+.game-row.selected {
+  background: #252830;
+  border-left-color: #76b900;
+}
+
+.game-status-dot {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #8a9ab0;
+}
+
+.game-thumb {
+  width: 38px;
+  height: 38px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: #2a2d35;
+}
+
+.game-thumb-fallback {
+  width: 38px;
+  height: 38px;
+  border-radius: 4px;
+  background: #2a2d35;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #8a9ab0;
+}
+
+.game-name {
+  font-size: 13px;
+  color: #8a9ab0;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.3;
+}
+
+.game-row.selected .game-name { color: #dde1e8; }
+
+/* Right panel */
+.game-detail {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #1e2124;
+}
+
+.game-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 28px;
+  border-bottom: 1px solid #2d3038;
+  flex-shrink: 0;
+}
+
+.game-detail-thumb {
+  width: 40px;
+  height: 40px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: #2a2d35;
+}
+
+.game-detail-thumb-fallback {
+  width: 40px;
+  height: 40px;
+  border-radius: 4px;
+  background: #2a2d35;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #8a9ab0;
+}
+
+.game-detail-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.game-detail-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: #dde1e8;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.game-detail-sub {
+  font-size: 11px;
+  color: #8a9ab0;
+  margin-top: 2px;
+}
+
+.game-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* PR-CCCC: harmonised dimensions across Launch / Optimize / Update DLSS.
+   All three buttons share padding + radius + font-size; only the fill /
+   border colour differs.  Inline-flex so any prefix icon sits next to
+   the label without extra wrapper markup. */
+.btn-optimize {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: #76b900;
+  color: #000;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border: 1px solid #76b900;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+  min-height: 30px;
+}
+
+.btn-optimize:hover { background: #85d000; }
+.btn-optimize:disabled { background: #2d3038; color: #596070; border-color: #2d3038; cursor: default; }
+
+.game-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 28px;
+  border-bottom: 1px solid #2d3038;
+  flex-shrink: 0;
+}
+
+.status-badge-warning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #e8a000;
+}
+
+.status-badge-ok {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #76b900;
+}
+
+.status-msg {
+  font-size: 11px;
+  color: #8a9ab0;
+  margin-left: 12px;
+}
+
+/* Settings table */
+/* PR-GGGG: scroll wrapper that holds both DLSS Settings (DllPicker) and
+   IN-GAME SETTINGS so expansions can be scrolled past , the old
+   .settings-scroll only scrolled the IN-GAME table itself, which meant
+   the DLSS Settings card pushed the in-game section off-screen when
+   both were expanded. */
+.game-detail-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.settings-scroll,
+.settings-table-wrap {
+  /* No flex sizing , they participate in the outer .game-detail-body
+     scroll instead of nesting an inner scrollbar. */
+}
+
+.settings-table {
+  width: 100%;
+}
+
+.settings-group-divider {
+  display: grid;
+  grid-template-columns: 1fr 200px 240px;
+  align-items: center;
+  padding: 10px 28px;
+  border-bottom: 1px solid #2d3038;
+  background: #1a1c1e;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.settings-col-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8a9ab0;
+}
+
+.settings-group-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #8a9ab0;
+  padding: 16px 28px 8px;
+  border-bottom: 1px solid #2d3038;
+  display: block;
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: 1fr 200px 240px;
+  align-items: center;
+  padding: 13px 28px;
+  border-bottom: 1px solid #2d3038;
+  transition: background 0.1s;
+}
+
+.settings-row:hover { background: #252830; }
+
+.settings-key {
+  font-size: 13px;
+  color: #dde1e8;
+  padding-right: 12px;
+}
+
+.settings-current {
+  font-size: 13px;
+  color: #8a9ab0;
+}
+
+.settings-current.differs { color: #8a9ab0; }
+
+.settings-recommended {
+  font-size: 13px;
+  color: #8a9ab0;
+}
+
+.settings-recommended.differs {
+  color: #76b900;
+  font-weight: 600;
+}
+
+.settings-empty {
+  padding: 40px 28px;
+  color: #8a9ab0;
+  font-size: 13px;
+  text-align: center;
+}
+
+/* Loading spinner */
+.spinner-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 28px;
+  gap: 10px;
+  color: #8a9ab0;
+  font-size: 12px;
+}
+
+/* ── Home / Status view ───────────────────────────────────────────────────── */
+.content-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 28px;
+}
+
+.section-card {
+  background: #252830;
+  border: 1px solid #2d3038;
+  border-radius: 6px;
+  padding: 20px 24px;
+  margin-bottom: 20px;
+}
+
+.section-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #dde1e8;
+  margin: 0 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #dde1e8;
+  margin: 0 0 16px;
+}
+
+.info-row {
+  padding: 14px 0;
+  border-bottom: 1px solid #2d3038;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 24px;
+}
+
+.info-row:last-child { border-bottom: none; }
+
+.info-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #dde1e8;
+}
+
+.info-value {
+  font-size: 13px;
+  color: #8a9ab0;
+}
+
+.info-value.ok { color: #76b900; }
+.info-value.warn { color: #e8a000; }
+
+/* Settings toggle */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 0;
+  border-bottom: 1px solid #2d3038;
+}
+
+.toggle-row:last-child { border-bottom: none; }
+
+.toggle-label { font-size: 13px; font-weight: 500; color: #dde1e8; }
+.toggle-desc { font-size: 11px; color: #8a9ab0; margin-top: 2px; }
+
+.toggle {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.toggle input { display: none; }
+
+.toggle-track {
+  position: absolute;
+  inset: 0;
+  background: #333840;
+  border-radius: 12px;
+  transition: background 0.2s;
+}
+
+.toggle.on .toggle-track { background: #76b900; }
+
+.toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+}
+
+.toggle.on .toggle-thumb { transform: translateX(20px); }
+
+/* Disclaimer */
+.disclaimer {
+  font-size: 11px;
+  color: #8a9ab0;
+  line-height: 1.6;
+  border-top: 1px solid #2d3038;
+  padding-top: 16px;
+  margin-top: 16px;
+}
+
+/* About version */
+.about-version { font-size: 13px; color: #b3b3b3; margin-bottom: 8px; }
+.about-copyright { font-size: 12px; color: #9a9ab0; margin-bottom: 16px; }
+
+/* Placeholder view */
+.placeholder-view {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  color: #8a9ab0;
+}
+
+.placeholder-view h2 { font-size: 15px; font-weight: 600; color: #8a9ab0; margin: 0; }
+.placeholder-view p { font-size: 12px; color: #7a8a9a; margin: 0; }
+
+/* Spin animation */
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Game hero banner ───────────────────────────────────────────────────── */
+.game-hero {
+  position: relative;
+  height: 180px;
+  background: #1a1c1e;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.game-hero-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.game-hero-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #1a2a1a, #1a1c1e);
+  color: #596070;
+}
+.game-hero-fallback svg { width: 48px; height: 48px; }
+.game-hero-overlay {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  background: linear-gradient(to top, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.4) 60%, transparent 100%);
+  padding: 28px 20px 14px;
+}
+.game-hero-name {
+  font-size: 17px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.7);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.game-hero-sub {
+  font-size: 11px;
+  color: rgba(255,255,255,0.6);
+  margin-top: 3px;
+}
+
+/* Game action bar */
+.game-action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid #2d3038;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.game-msg-bar {
+  padding: 6px 16px;
+  background: rgba(0,0,0,0.2);
+  border-bottom: 1px solid #2d3038;
+  font-size: 11px;
+  display: flex;
+  gap: 16px;
+}
+
+/* Revert / DLSS buttons */
+.btn-revert {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+  border: 1px solid #444c58;
+  background: #252830;
+  color: #dde1e8;
+}
+.btn-revert:hover:not(:disabled) { background: #2d3038; }
+.btn-revert:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-dlss {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+  border: 1px solid rgba(118,185,0,0.3);
+  background: rgba(118,185,0,0.08);
+  color: #76b900;
+  min-height: 30px;
+  box-sizing: border-box;
+}
+.btn-dlss:hover:not(:disabled) { background: rgba(118,185,0,0.15); }
+.btn-dlss:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Home component buttons ──────────────────────────────────────────────── */
+.btn-component {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 14px;
+  min-height: 30px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid rgba(118,185,0,0.3);
+  background: rgba(118,185,0,0.08);
+  color: #76b900;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+.btn-component:hover:not(:disabled) { background: rgba(118,185,0,0.18); }
+.btn-component:disabled { opacity: 0.5; cursor: not-allowed; }
+.component-msg {
+  font-size: 11px;
+  color: #76b900;
+  margin: 6px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid #2d3038;
+}
+
+/* ── GPU Profile sliders ─────────────────────────────────────────────────── */
+.gpu-stats-bar {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  background: #252830;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  align-items: center;
+  border: 1px solid #2d3038;
+}
+.gpu-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: #dde1e8;
+}
+.gpu-stat-label { font-size: 10px; color: #9a9ab0; font-weight: 400; text-transform: uppercase; letter-spacing: 0.05em; }
+
+.slider-row { display: flex; flex-direction: column; gap: 6px; }
+.slider-label { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+.slider-value { color: #76b900; font-weight: 600; font-size: 13px; }
+.slider-bounds { display: flex; justify-content: space-between; font-size: 10px; color: #8a9ab0; }
+
+.gb-slider {
+  width: 100%;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: #333840;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+.gb-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #76b900;
+  cursor: pointer;
+  box-shadow: 0 0 0 2px rgba(118,185,0,0.2);
+}
+.gb-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #76b900;
+  cursor: pointer;
+  border: none;
+}
+
+/* ── Display cards ───────────────────────────────────────────────────────── */
+.display-cards-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.display-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 16px 14px;
+  background: #252830;
+  border: 1px solid #2d3038;
+  border-bottom: 3px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  min-width: 150px;
+  transition: border-color 0.2s, background 0.2s;
+}
+.display-card:hover { background: #2a2d35; }
+.display-card.selected {
+  border-bottom-color: #76b900;
+  background: #2a2d35;
+}
+.display-card-icon { color: #8a9ab0; }
+.display-card.selected .display-card-icon { color: #76b900; }
+.display-card-name { font-size: 13px; font-weight: 600; color: #dde1e8; }
+.display-card-sub { font-size: 11px; color: #8a9ab0; }
+.display-card-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(118,185,0,0.12);
+  color: #76b900;
+  border: 1px solid rgba(118,185,0,0.2);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+/* Display-panel selects use the same .gb-select styling we
+   consolidated at the top of this file (PR-CCCC). */
+
+/* Orientation buttons */
+.orientation-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.orientation-btn {
+  padding: 7px 14px;
+  background: #252830;
+  border: 1px solid #333840;
+  border-radius: 5px;
+  color: #8a9ab0;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.orientation-btn:hover { background: #2a2d35; color: #dde1e8; }
+.orientation-btn.active {
+  background: rgba(118,185,0,0.1);
+  border-color: rgba(118,185,0,0.4);
+  color: #76b900;
+}
+.animate-spin { animation: spin 1s linear infinite; }
+
+/* ── Collapsible section (DLSS SETTINGS / IN-GAME SETTINGS) ─────────────── */
+.gs-section {
+  margin: 16px 0;
+  border: 1px solid #2d3038;
+  border-radius: 6px;
+  background: #1a1c1e;
+  overflow: hidden;
+}
+.gs-section-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  background: transparent;
+  border: none;
+  color: #dde1e8;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  text-align: left;
+}
+.gs-section-header:hover { background: #20232a; }
+.gs-section-body { border-top: 1px solid #2d3038; }
+
+/* ── Editable Current Value cell ────────────────────────────────────────── */
+.settings-current-input {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: #8a9ab0;
+  font-size: 13px;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+.settings-current-input:hover { border-color: #2d3038; }
+.settings-current-input:focus {
+  border-color: #76b900;
+  background: #1a1c1e;
+  color: #dde1e8;
+  outline: none;
+}
+.settings-current-input.differs { color: #8a9ab0; }
+.settings-current-input:disabled { opacity: 0.5; cursor: not-allowed; }

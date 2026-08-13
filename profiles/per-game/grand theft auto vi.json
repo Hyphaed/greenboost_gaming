@@ -1,0 +1,37 @@
+{
+  "engine": "rage",
+  "description": "GTA VI \u2014 RAGE engine, DLSS 3.5 + Frame Gen (anticipated)",
+  "settings": {
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "FrameGeneration": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "ReflexMode": {
+      "ultra": "enabled+boost",
+      "high": "enabled+boost",
+      "medium": "enabled",
+      "low": "enabled"
+    },
+    "RayTracing": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "MotionBlur": "false"
+  }
+}

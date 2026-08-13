@@ -1,0 +1,13 @@
+{
+  "engine": "snowdrop",
+  "description": "Ghost Recon Wildlands \u2014 Snowdrop, smooth open world",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "MotionBlur": "false"
+  }
+}

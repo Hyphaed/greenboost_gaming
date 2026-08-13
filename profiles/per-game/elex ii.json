@@ -1,0 +1,18 @@
+{
+  "engine": "genome",
+  "description": "ELEX II \u2014 Genome engine, smooth open world",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "TextureQuality": {
+      "ultra": "4",
+      "high": "3",
+      "medium": "2",
+      "low": "1"
+    }
+  }
+}

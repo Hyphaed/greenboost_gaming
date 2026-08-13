@@ -1,0 +1,14 @@
+{
+  "engine": "source",
+  "description": "CS:GO \u2014 competitive FPS optimization",
+  "settings": {
+    "fps_max": "300",
+    "mat_queue_mode": "-1",
+    "r_dynamic": "0",
+    "r_shadows": "0",
+    "r_shadowrendertotexture": "0",
+    "cl_interp": "0",
+    "cl_interp_ratio": "1",
+    "rate": "786432"
+  }
+}

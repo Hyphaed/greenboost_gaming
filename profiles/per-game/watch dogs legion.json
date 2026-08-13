@@ -1,0 +1,31 @@
+{
+  "engine": "disrupt",
+  "description": "Watch Dogs Legion \u2014 Disrupt engine, DLSS 2 + RT",
+  "settings": {
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "RayTracedShadows": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "RayTracedReflections": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "RayTracedAO": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "MotionBlur": "false"
+  }
+}

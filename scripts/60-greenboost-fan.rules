@@ -1,0 +1,23 @@
+// Copyright 2026 Ferran Duarri , GPL v2
+// GreenBoost Gaming Suite , polkit rule for passwordless NVML fan control.
+//
+// Allows any active local user to run the NVML fan helper (nvml_fan.py)
+// via pkexec without entering a password.  The helper is the only program
+// that benefits from this rule , it uses libnvidia-ml.so.1 to set fan
+// speeds, which requires root (nvmlDeviceSetFanSpeed_v2).
+//
+// Install to: /etc/polkit-1/rules.d/60-greenboost-fan.rules
+
+polkit.addRule(function(action, subject) {
+    if (action.id === "org.freedesktop.policykit.exec" &&
+        subject.local &&
+        subject.active &&
+        (
+            // Installed path
+            action.lookup("program") === "/usr/bin/python3" &&
+            (action.lookup("command_line") || "").indexOf("nvml_fan.py") >= 0
+        ))
+    {
+        return polkit.Result.YES;
+    }
+});

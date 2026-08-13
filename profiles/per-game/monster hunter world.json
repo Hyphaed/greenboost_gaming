@@ -1,0 +1,28 @@
+{
+  "engine": "re engine",
+  "description": "Monster Hunter: World \u2014 RE Engine, optimize for 60+ FPS",
+  "settings": {
+    "ImageQuality": {
+      "ultra": "100",
+      "high": "85",
+      "medium": "70",
+      "low": "60"
+    },
+    "MotionBlur": "Off",
+    "DepthOfField": "On",
+    "AnisotropicFiltering": "16",
+    "ShadowQuality": {
+      "ultra": "High",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "ImageFilter": "DLSS",
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "Performance"
+    }
+  }
+}

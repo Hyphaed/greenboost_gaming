@@ -1,0 +1,27 @@
+{
+  "engine": "fromsoftware",
+  "description": "Elden Ring \u2014 maximize framerate, disable CPU-heavy effects",
+  "settings": {
+    "MotionBlur": "0",
+    "Vignette": "0",
+    "AntiAliasing": "2",
+    "TextureQuality": {
+      "ultra": "4",
+      "high": "3",
+      "medium": "2",
+      "low": "1"
+    },
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "Off"
+    }
+  }
+}

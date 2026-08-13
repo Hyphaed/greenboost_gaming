@@ -1,0 +1,24 @@
+{
+  "engine": "custom",
+  "description": "SnowRunner \u2014 smooth off-road simulation",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "TextureQuality": {
+      "ultra": "4",
+      "high": "3",
+      "medium": "2",
+      "low": "1"
+    },
+    "DrawDistance": {
+      "ultra": "3000",
+      "high": "2000",
+      "medium": "1500",
+      "low": "1000"
+    }
+  }
+}

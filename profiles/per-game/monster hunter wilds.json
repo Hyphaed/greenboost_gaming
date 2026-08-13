@@ -1,0 +1,64 @@
+{
+  "engine": "re engine",
+  "description": "Monster Hunter Wilds \u2014 RE Engine 4.0, DLSS 4 + Frame Gen",
+  "settings": {
+    "ImageQuality": {
+      "ultra": "100",
+      "high": "85",
+      "medium": "70",
+      "low": "60"
+    },
+    "MotionBlur": "Off",
+    "DepthOfField": "On",
+    "AnisotropicFiltering": "16",
+    "ShadowQuality": {
+      "ultra": "High",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "ImageFilter": "DLSS",
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "RayTracing": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "RayTracedShadows": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "RayTracedGI": {
+      "ultra": "true",
+      "high": "false",
+      "medium": "false",
+      "low": "false"
+    },
+    "FrameGeneration": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "ReflexMode": {
+      "ultra": "enabled",
+      "high": "enabled",
+      "medium": "enabled",
+      "low": "disabled"
+    },
+    "MultiFrameGen": {
+      "ultra": "true",
+      "high": "false",
+      "medium": "false",
+      "low": "false"
+    }
+  }
+}

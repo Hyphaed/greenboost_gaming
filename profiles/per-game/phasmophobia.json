@@ -1,0 +1,21 @@
+{
+  "engine": "unity",
+  "description": "Phasmophobia \u2014 Unity, smooth ghost hunting",
+  "settings": {
+    "targetFrameRate": "-1",
+    "vSyncCount": "0",
+    "shadowDistance": {
+      "ultra": "100",
+      "high": "75",
+      "medium": "50",
+      "low": "25"
+    },
+    "shadowCascades": {
+      "ultra": "4",
+      "high": "4",
+      "medium": "2",
+      "low": "1"
+    },
+    "antiAliasing": "0"
+  }
+}

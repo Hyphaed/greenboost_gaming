@@ -1,0 +1,21 @@
+{
+  "engine": "cry engine",
+  "description": "Star Citizen \u2014 CryEngine, maximize performance in missions",
+  "settings": {
+    "r_texMaxAnisotropy": "16",
+    "r_MotionBlur": "0",
+    "sys_spec_shaders": {
+      "ultra": "4",
+      "high": "3",
+      "medium": "2",
+      "low": "1"
+    },
+    "sys_spec_shadows": {
+      "ultra": "4",
+      "high": "3",
+      "medium": "2",
+      "low": "1"
+    },
+    "r_VSync": "0"
+  }
+}

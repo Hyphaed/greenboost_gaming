@@ -1,0 +1,25 @@
+{
+  "engine": "iw",
+  "description": "Call of Duty MWII \u2014 IW engine, DLSS 3",
+  "settings": {
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "ReflexMode": {
+      "ultra": "enabled+boost",
+      "high": "enabled+boost",
+      "medium": "enabled",
+      "low": "enabled"
+    },
+    "ShadowMap": {
+      "ultra": "Extra",
+      "high": "High",
+      "medium": "Normal",
+      "low": "Low"
+    },
+    "MotionBlur": "0"
+  }
+}

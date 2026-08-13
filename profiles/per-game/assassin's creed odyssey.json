@@ -1,0 +1,25 @@
+{
+  "engine": "anvil next",
+  "description": "AC: Odyssey \u2014 AnvilNext 2.0, optimize for open world",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "MotionBlur": "false",
+    "TextureQuality": {
+      "ultra": "4",
+      "high": "3",
+      "medium": "2",
+      "low": "1"
+    },
+    "AmbientOcclusion": {
+      "ultra": "HBAO+",
+      "high": "SSAO",
+      "medium": "SSAO",
+      "low": "Off"
+    }
+  }
+}

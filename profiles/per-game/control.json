@@ -1,0 +1,25 @@
+{
+  "engine": "northlight",
+  "description": "Control \u2014 Northlight engine, DLSS 2 + RT",
+  "settings": {
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "RayTracingMode": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Off",
+      "low": "Off"
+    },
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "MotionBlur": "false"
+  }
+}

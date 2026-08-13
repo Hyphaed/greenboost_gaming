@@ -1,0 +1,10 @@
+{
+  "engine": "source",
+  "description": "Left 4 Dead 2 \u2014 smooth co-op experience",
+  "settings": {
+    "fps_max": "300",
+    "mat_queue_mode": "-1",
+    "r_shadows": "0",
+    "r_dynamic": "0"
+  }
+}

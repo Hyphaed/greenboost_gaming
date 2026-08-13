@@ -1,0 +1,30 @@
+{
+  "engine": "custom",
+  "description": "MSFS 2020 \u2014 DLSS 2 + smooth open world flight",
+  "settings": {
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "CloudQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "TerrainLOD": {
+      "ultra": "400",
+      "high": "200",
+      "medium": "150",
+      "low": "100"
+    },
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    }
+  }
+}

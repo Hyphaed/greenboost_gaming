@@ -1,0 +1,40 @@
+{
+  "engine": "rage",
+  "description": "GTA V \u2014 RAGE engine enhanced, maximize FPS",
+  "settings": {
+    "MSAA": "0",
+    "FXAA": "0",
+    "txaa": "0",
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "Off"
+    },
+    "shadowQuality": {
+      "ultra": "very high",
+      "high": "high",
+      "medium": "normal",
+      "low": "low"
+    },
+    "extrashadows": {
+      "ultra": "1",
+      "high": "1",
+      "medium": "0",
+      "low": "0"
+    },
+    "grassQuality": {
+      "ultra": "very high",
+      "high": "high",
+      "medium": "normal",
+      "low": "low"
+    },
+    "postFX": {
+      "ultra": "very high",
+      "high": "high",
+      "medium": "normal",
+      "low": "low"
+    },
+    "motionblur": "false"
+  }
+}

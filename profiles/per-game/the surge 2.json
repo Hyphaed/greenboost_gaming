@@ -1,0 +1,13 @@
+{
+  "engine": "custom",
+  "description": "The Surge 2 \u2014 custom engine, smooth souls-like",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "MotionBlur": "false"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "engine": "custom",
+  "description": "Tales of Berseria \u2014 stable 60 FPS",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "High",
+      "high": "Medium",
+      "medium": "Low",
+      "low": "Off"
+    },
+    "MotionBlur": "false"
+  }
+}

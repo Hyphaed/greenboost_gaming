@@ -1,0 +1,13 @@
+{
+  "engine": "custom",
+  "description": "Immortals Fenyx Rising \u2014 AnvilNext, smooth open world",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "MotionBlur": "false"
+  }
+}

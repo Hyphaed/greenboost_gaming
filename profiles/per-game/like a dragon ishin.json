@@ -1,0 +1,18 @@
+{
+  "engine": "dragon",
+  "description": "Like a Dragon Ishin \u2014 Dragon engine, DLSS 2",
+  "settings": {
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "engine": "custom",
+  "description": "Quake II RTX \u2014 full path tracing enabled",
+  "settings": {
+    "pt_enable": "1",
+    "pt_num_bounce_rays": {
+      "ultra": "4",
+      "high": "2",
+      "medium": "1",
+      "low": "1"
+    },
+    "pt_fake_roughness_threshold": "0.1",
+    "pt_direct_polygon_lights": "1"
+  }
+}

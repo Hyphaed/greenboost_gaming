@@ -1,0 +1,49 @@
+{
+  "engine": "custom",
+  "description": "MSFS 2024 \u2014 maximize scenery with DLSS 3",
+  "settings": {
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "FrameGeneration": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "CloudQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "TerrainLOD": {
+      "ultra": "400",
+      "high": "250",
+      "medium": "150",
+      "low": "100"
+    },
+    "ObjectLOD": {
+      "ultra": "400",
+      "high": "200",
+      "medium": "150",
+      "low": "100"
+    },
+    "ShadowCasters": {
+      "ultra": "1500",
+      "high": "1000",
+      "medium": "500",
+      "low": "250"
+    },
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "MotionBlur": "false"
+  }
+}

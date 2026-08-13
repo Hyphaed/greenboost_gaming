@@ -1,0 +1,13 @@
+{
+  "engine": "source",
+  "description": "Apex Legends \u2014 Source engine, maximize FPS for competitive play",
+  "settings": {
+    "mat_queue_mode": "-1",
+    "fps_max": "300",
+    "r_dynamic": "0",
+    "r_shadows": "0",
+    "ambient_occlusion": "0",
+    "sun_shadow_depth_dimen_minmax": "512 512",
+    "ReflexEnable": "1"
+  }
+}

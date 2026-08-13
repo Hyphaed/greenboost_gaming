@@ -1,0 +1,12 @@
+# GreenBoost Gaming Suite , sudoers rules for passwordless NVML helpers.
+# Covers nvml_fan.py (fan control) and nvml_control.py (power/clock limits).
+# The fan daemon and the GUI Profile view use "sudo -n" (non-interactive) so
+# that the user is never prompted for a password after install.
+#
+# Install to: /etc/sudoers.d/60-greenboost-fan
+# (install.sh does this automatically via visudo-safe copy)
+
+ALL ALL=(root) NOPASSWD: /usr/bin/python3 /usr/local/lib/greenboost-gaming/gb_gaming/nvml_fan.py *
+ALL ALL=(root) NOPASSWD: /usr/bin/python3 /usr/lib/greenboost-gaming/gb_gaming/nvml_fan.py *
+ALL ALL=(root) NOPASSWD: /usr/bin/python3 /usr/local/lib/greenboost-gaming/gb_gaming/nvml_control.py *
+ALL ALL=(root) NOPASSWD: /usr/bin/python3 /usr/lib/greenboost-gaming/gb_gaming/nvml_control.py *

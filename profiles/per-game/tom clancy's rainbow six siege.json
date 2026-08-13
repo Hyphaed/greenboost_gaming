@@ -1,0 +1,30 @@
+{
+  "engine": "anvil next",
+  "description": "Rainbow Six Siege \u2014 AnvilNext, maximize FPS competitive",
+  "settings": {
+    "DLSS": {
+      "ultra": "Off",
+      "high": "Off",
+      "medium": "Quality",
+      "low": "Balanced"
+    },
+    "TextureQuality": {
+      "ultra": "2",
+      "high": "2",
+      "medium": "1",
+      "low": "1"
+    },
+    "ShadowQuality": {
+      "ultra": "Medium",
+      "high": "Low",
+      "medium": "Low",
+      "low": "Off"
+    },
+    "LODQuality": {
+      "ultra": "3",
+      "high": "2",
+      "medium": "1",
+      "low": "0"
+    }
+  }
+}

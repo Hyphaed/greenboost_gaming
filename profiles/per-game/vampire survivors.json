@@ -1,0 +1,12 @@
+{
+  "engine": "custom",
+  "description": "Vampire Survivors \u2014 smooth endgame",
+  "settings": {
+    "MaxParticles": {
+      "ultra": "10000",
+      "high": "5000",
+      "medium": "2000",
+      "low": "1000"
+    }
+  }
+}

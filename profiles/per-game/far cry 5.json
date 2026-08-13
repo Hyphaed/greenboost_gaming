@@ -1,0 +1,19 @@
+{
+  "engine": "dunia",
+  "description": "Far Cry 5 \u2014 Dunia engine, smooth 60+ FPS",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "MotionBlur": "false",
+    "TextureQuality": {
+      "ultra": "4",
+      "high": "3",
+      "medium": "2",
+      "low": "1"
+    }
+  }
+}

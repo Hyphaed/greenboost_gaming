@@ -1,0 +1,21 @@
+{
+  "engine": "unity",
+  "description": "Subnautica: Below Zero \u2014 Unity, smooth exploration",
+  "settings": {
+    "targetFrameRate": "-1",
+    "vSyncCount": "0",
+    "shadowDistance": {
+      "ultra": "200",
+      "high": "150",
+      "medium": "100",
+      "low": "50"
+    },
+    "shadowCascades": {
+      "ultra": "4",
+      "high": "4",
+      "medium": "2",
+      "low": "1"
+    },
+    "antiAliasing": "0"
+  }
+}

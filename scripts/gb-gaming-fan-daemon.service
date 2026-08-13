@@ -1,0 +1,30 @@
+[Unit]
+Description=GreenBoost Gaming Suite , Fan curve daemon
+Documentation=https://github.com/IsolatedOctopi/greenboost-gaming
+# Wait for the graphical session so DISPLAY / WAYLAND_DISPLAY are set
+# (nvidia-settings needs a display connection).
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -m gb_gaming.fan_daemon
+# Restart automatically if the daemon crashes (driver hiccup, etc.) but
+# back off so we don't busy-loop on a misconfigured system.
+Restart=on-failure
+RestartSec=10
+# Don't let a runaway daemon eat the system , bound CPU + memory.
+CPUQuota=15%
+MemoryMax=64M
+
+# Environment so the daemon picks up the user's display + path to the
+# bundled gb_gaming package (when installed in /usr/local).
+Environment=PYTHONPATH=/usr/local/lib/greenboost-gaming
+Environment=PYTHONUNBUFFERED=1
+# Forwards journal output so `journalctl --user -u gb-gaming-fan-daemon`
+# picks it up cleanly.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

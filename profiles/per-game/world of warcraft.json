@@ -1,0 +1,36 @@
+{
+  "engine": "proprietary",
+  "description": "World of Warcraft \u2014 smooth raid performance",
+  "settings": {
+    "graphicsQuality": {
+      "ultra": "7",
+      "high": "6",
+      "medium": "5",
+      "low": "4"
+    },
+    "shadowQuality": {
+      "ultra": "7",
+      "high": "5",
+      "medium": "3",
+      "low": "1"
+    },
+    "liquidDetail": {
+      "ultra": "2",
+      "high": "1",
+      "medium": "1",
+      "low": "0"
+    },
+    "particleDensity": {
+      "ultra": "100",
+      "high": "75",
+      "medium": "50",
+      "low": "25"
+    },
+    "SSAOType": {
+      "ultra": "2",
+      "high": "1",
+      "medium": "0",
+      "low": "0"
+    }
+  }
+}

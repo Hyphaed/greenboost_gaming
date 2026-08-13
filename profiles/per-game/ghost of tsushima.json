@@ -1,0 +1,31 @@
+{
+  "engine": "custom",
+  "description": "Ghost of Tsushima \u2014 custom engine, DLSS 3",
+  "settings": {
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "UltraPerformance"
+    },
+    "FrameGeneration": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "ReflexMode": {
+      "ultra": "enabled",
+      "high": "enabled",
+      "medium": "enabled",
+      "low": "disabled"
+    },
+    "ShadowQuality": {
+      "ultra": "Ultra",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "MotionBlur": "false"
+  }
+}

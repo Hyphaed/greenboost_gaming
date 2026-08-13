@@ -1,0 +1,31 @@
+{
+  "engine": "custom",
+  "description": "League of Legends \u2014 maximize FPS for competitive",
+  "settings": {
+    "FrameCapType": "BenchmarkTest",
+    "ShadowQuality": {
+      "ultra": "2",
+      "high": "1",
+      "medium": "0",
+      "low": "0"
+    },
+    "ParticleQuality": {
+      "ultra": "High",
+      "high": "Medium",
+      "medium": "Low",
+      "low": "Low"
+    },
+    "CharacterQuality": {
+      "ultra": "Very High",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "EnvironmentQuality": {
+      "ultra": "Very High",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    }
+  }
+}

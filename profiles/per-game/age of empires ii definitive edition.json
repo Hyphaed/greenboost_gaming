@@ -1,0 +1,19 @@
+{
+  "engine": "custom",
+  "description": "AoE2 DE \u2014 optimize for large multiplayer battles",
+  "settings": {
+    "Resolution": "Native",
+    "Shadows": {
+      "ultra": "High",
+      "high": "Medium",
+      "medium": "Low",
+      "low": "Off"
+    },
+    "Water": {
+      "ultra": "Full",
+      "high": "Full",
+      "medium": "Low",
+      "low": "Off"
+    }
+  }
+}

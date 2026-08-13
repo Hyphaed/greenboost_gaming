@@ -1,0 +1,18 @@
+{
+  "engine": "custom",
+  "description": "MudRunner \u2014 smooth off-road simulation",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "High",
+      "high": "Medium",
+      "medium": "Low",
+      "low": "Off"
+    },
+    "DrawDistance": {
+      "ultra": "2000",
+      "high": "1500",
+      "medium": "1000",
+      "low": "750"
+    }
+  }
+}

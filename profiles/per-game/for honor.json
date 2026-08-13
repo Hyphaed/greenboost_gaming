@@ -1,0 +1,13 @@
+{
+  "engine": "anvil next",
+  "description": "For Honor \u2014 AnvilNext, maximize FPS",
+  "settings": {
+    "ShadowQuality": {
+      "ultra": "High",
+      "high": "Medium",
+      "medium": "Low",
+      "low": "Off"
+    },
+    "MotionBlur": "false"
+  }
+}

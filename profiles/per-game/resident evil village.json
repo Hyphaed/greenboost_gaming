@@ -1,0 +1,46 @@
+{
+  "engine": "re engine",
+  "description": "Resident Evil Village \u2014 RE Engine, DLSS 2 + RT",
+  "settings": {
+    "ImageQuality": {
+      "ultra": "100",
+      "high": "85",
+      "medium": "70",
+      "low": "60"
+    },
+    "MotionBlur": "Off",
+    "DepthOfField": "On",
+    "AnisotropicFiltering": "16",
+    "ShadowQuality": {
+      "ultra": "High",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "ImageFilter": "DLSS",
+    "DLSS": {
+      "ultra": "Quality",
+      "high": "Balanced",
+      "medium": "Performance",
+      "low": "Performance"
+    },
+    "RayTracing": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "RayTracedShadows": {
+      "ultra": "true",
+      "high": "true",
+      "medium": "false",
+      "low": "false"
+    },
+    "RayTracedGI": {
+      "ultra": "true",
+      "high": "false",
+      "medium": "false",
+      "low": "false"
+    }
+  }
+}
