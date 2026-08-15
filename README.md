@@ -54,19 +54,54 @@ came from, so you can see the chain of custody at a glance:
 
 ---
 
-## Who is this for?
+## So what does it actually do?
 
-- **Gamers** with an 8 / 12 GB NVIDIA card who keep hitting VRAM walls
-  in modern AAA titles. You want the headroom of a bigger card without
-  buying one.
-- **Streamers and content creators** running the game + an encoder + a
-  language model in the same session. VRAM gets tight fast.
-- **Tinkerers** who already installed GreenBoost for AI workloads and
-  want to use the same memory pool for the rest of their setup.
+Easiest way to answer that is the way I'd answer it across a table, with
+a coffee, if you'd just asked me what I've been working on.
 
-If your games run fine at their target quality preset and you never see
-"out of video memory" warnings, you don't need this. The Suite adds no
-benefit when VRAM isn't the bottleneck.
+**"It gives games more VRAM."** That's the bit that came from the AI
+project. Your card has 8, 12, 16 GB, and a modern game eats all of it and
+then starts stuttering or quietly loading uglier textures. GreenBoost
+lends the game your system RAM as extra memory underneath the real VRAM,
+and NVMe after that, and RAM on another machine on your LAN after that.
+The game never finds out. It just sees a card with more memory than you
+paid for. Slower memory, yes, but memory it can use instead of falling
+over.
+
+**"And what if my games run fine already?"** Then you ignore that part
+and use the rest, which honestly is what I open it for most days:
+
+- **Your DLSS DLLs are old and nobody tells you.** Games ship whatever
+  DLSS version they shipped with, sometimes years out of date. This pulls
+  the current ones from NVIDIA's own repos, keeps every version it has
+  ever downloaded, and lets you say "this game uses that one". New
+  release makes a game shimmer? Roll that one game back. Two clicks.
+- **Fans that stop doing the annoying thing.** You drag a curve with the
+  mouse and watch your current temperature slide along it. It won't
+  oscillate up and down every four seconds, because it waits for a 3 °C
+  drop before easing off.
+- **Power and clocks in one place**, so you can run the card quieter for
+  an evening without going hunting through the terminal.
+- **Monitors.** Arrangement, resolution, refresh rate, scaling, VRR. On
+  Wayland, natively , not by quietly falling back to X11 behind your back.
+- **Per-game settings that stick**, including about 299 profiles already
+  written for titles people play, so a lot of the time there's nothing
+  for you to configure.
+- **A live view while you play** , temperature, clocks, power, VRAM ,
+  that warns you the card has started backing off its clocks *before* you
+  feel it in the framerate.
+- **A status page that just tells you** whether all of this is actually
+  running, instead of leaving you to wonder whether it does anything.
+
+**"So who's it for?"** People on an 8 or 12 GB NVIDIA card hitting walls
+in AAA titles; people streaming or running an encoder and a language
+model alongside the game, where VRAM disappears fast; people who already
+run GreenBoost for AI work and would like the same memory pool for the
+rest of the machine. And, going by the list above, anyone who just wants
+their fan curve, DLSS versions and monitors handled in one window.
+
+None of that second list needs the kernel module. It works with GreenBoost
+core doing nothing at all.
 
 ---
 
@@ -76,8 +111,8 @@ benefit when VRAM isn't the bottleneck.
 |---|---|
 | **Vulkan implicit layer** (`greenboost_vulkan_layer.c`) | Inflates each game's reported `VkPhysicalDeviceMemoryProperties` to include T2 DDR, routes overflow allocations through DMA-BUF imports. Also does NIS sharpen/upscale (embedded SPIR-V) and NVIDIA Reflex via `VK_NV_low_latency2` |
 | **OpenGL layer** (`greenboost_gl_layer.c`) | The same memory-tiering idea for OpenGL titles. Younger and less exercised than the Vulkan one |
-| **Desktop app** (Tauri + React) | Six views: Status, Games, Displays, Profile, Live, About |
-| **GreenBoost Proton** | A Steam compatibility tool that sets up the environment, picks CPU affinity from your actual topology, and writes session telemetry |
+| **Desktop app** | Six views: Status, Games, Displays, Profile, Live, About |
+| **GreenBoost Proton** | A Proton version that shows up in Steam's compatibility list next to Proton 10.0 and Experimental, and that you pick per game the same way. It doesn't replace Proton , it sits in front of the one you already have: prepares the machine for that specific title, then hands the launch to upstream Proton (stable or Experimental, selected by a `channel` file) and gets out of the way. Before the hand-off it sets CPU affinity from your real topology, applies the per-game JSON profile's env / DXR / VKD3D settings, activates the GPU power-clock profile and matching fan curve, overlays dxvk-gplasync, stages the NIS shaders, tunes swappiness and the compositor for the session, and writes a telemetry line on exit. If any of that fails it falls back to a plain upstream Proton launch instead of taking the game down with it |
 | **Fan daemon** | systemd user unit with a 3 °C hysteresis so your fans stop oscillating |
 | **DLSS / Streamline updater** | Pulls the newest DLLs straight from NVIDIA's official GitHub repos, keeps every version it has ever fetched, and lets you pick per game |
 | **~299 per-game profiles** | JSON files in `profiles/per-game/` with known-good tweaks per title |
@@ -102,17 +137,17 @@ What the views do:
 
 ## Before you install: you need GreenBoost core
 
-The Suite is a **frontend onto the GreenBoost memory pool**. The kernel module
-and CUDA shim do the actual memory work , without them you still get the fan
-curves, DLSS updater and display settings, but not the VRAM expansion, which is
-the whole point.
+One of the Suite's features is a **frontend onto the GreenBoost memory pool**.
+The kernel module and CUDA shim do the actual memory work , without them you
+still get the fan curves, DLSS updater, per-game profiles and display settings,
+but not the VRAM expansion.
 
 ---
 
 ## Install
 
 ```bash
-git clone https://gitlab.com/isolatedoctopi1/greenboost_gaming_suite.git
+git clone https://gitlab.com/IsolatedOctopi/greenboost_gaming_suite.git
 cd greenboost_gaming_suite
 sudo ./install.sh
 ```
