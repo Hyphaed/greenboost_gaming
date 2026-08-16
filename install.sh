@@ -556,10 +556,47 @@ esac
 if [[ "$GUI_KIND" == "tauri" ]]; then
     step "building Tauri bundle (this can take several minutes)"
     pushd "$PROJECT_ROOT/src" >/dev/null
-    npm install --no-fund --no-audit
+    # Build as the invoking user, not root , same reasoning as the
+    # greenboost_proton/install.sh hand-off further down. npm and cargo
+    # write into the source tree (src/dist/, src/node_modules/,
+    # src/src-tauri/target/) and into their own caches; doing that as root
+    # leaves root-owned build output behind in a user-owned checkout.
+    # Observed 2026-08-16: src/dist/assets/ owned by root:root from an
+    # earlier sudo install made every later unprivileged `npm run build`
+    # die with EACCES in vite's prepare-out-dir step, which reads as a
+    # broken toolchain rather than as a permissions leftover. Only the
+    # install(1) of the finished binary below needs to be root.
     # Rust's equivalent of GB_GAMING_CFLAGS' -march=native , same
     # never-leaves-this-box rationale as the C layers above.
-    RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=native" npm run tauri build
+    if [[ -n "$_REAL_USER" ]]; then
+        # Heal a checkout an older root build already poisoned. Without
+        # this, switching to an unprivileged build just moves the EACCES
+        # from a future `npm run build` into this one.
+        # Test recursively, not just the top directory: the observed case
+        # was a user-owned src/dist containing a root-owned dist/assets,
+        # which a top-level ownership check walks straight past.
+        for _d in dist node_modules src-tauri/target; do
+            [[ -e "$_d" ]] || continue
+            if [[ -n "$(find "$_d" ! -user "$_REAL_USER" -print -quit 2>/dev/null)" ]]; then
+                warn "reclaiming root-owned files under src/$_d from an earlier privileged build"
+                chown -R "$_REAL_USER" "$_d"
+            fi
+        done
+        # PATH="$PATH" is load-bearing, not decoration. npm/node commonly
+        # live under ~/.nvm/versions/node/*/bin (they do on the machine
+        # this was written on), which is on nobody's secure_path , so a
+        # plain `sudo -u ... npm` resolves to nothing and the GUI build
+        # dies claiming npm is missing. We already hold a PATH that finds
+        # it (this script got here via npm-adjacent checks), so forward
+        # that rather than guessing at the user's shell rc files.
+        sudo -u "$_REAL_USER" -H env \
+            PATH="$PATH" \
+            RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=native" \
+            sh -c 'npm install --no-fund --no-audit && npm run tauri build'
+    else
+        npm install --no-fund --no-audit
+        RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=native" npm run tauri build
+    fi
     popd >/dev/null
     local_bin="$PROJECT_ROOT/src/src-tauri/target/release/tauri-app"
     [[ -f $local_bin ]] || local_bin="$PROJECT_ROOT/src/src-tauri/target/release/greenboost-gaming"

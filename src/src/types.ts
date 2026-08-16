@@ -50,6 +50,10 @@ export interface GpuMetrics {
   vram_used_mb:   number | null;
   vram_total_mb:  number | null;
   fan_pct:        number | null;
+  /** Human-readable NVML clock-throttle reasons. Empty = not throttling. */
+  throttle_reasons: string[];
+  /** false when NVML couldn't tell us , not the same as "not throttling". */
+  throttle_known:   boolean;
 }
 export interface PoolBrief {
   t1_gb:         number;
@@ -164,6 +168,9 @@ export interface GameOverrides {
 }
 
 export interface GlobalSettingsState {
+  /** Mirrors perf_mode in global_settings.rs. Was absent here, which let
+   *  About write it through an untyped spread with no type checking. */
+  perf_mode: boolean;
   dlss_preset: string;
   dlss_indicator: boolean;
   dlss_upgrade: boolean;
@@ -221,3 +228,23 @@ export type InstallStreamProps = {
   confirm?:     string;
   onDone:       (ok: boolean) => void;
 };
+
+/// Mirrors AutoTuneResult in src-tauri/src/manager.rs , the per-card +
+/// per-CPU-topology recommendation behind Smart Defaults. It was previously
+/// typed inline at the call site as `{label, notes}`, which is why
+/// `recommended_shader_threads` was being silently discarded despite
+/// CLAUDE.md requiring it be written to GlobalSettings.shader_threads.
+export interface AutoTuneResult {
+  label: string;
+  core_offset_mhz: number;
+  mem_offset_mt: number;
+  power_w: number;
+  lock_clocks_mhz: number | null;
+  fan_curve: [number, number][];
+  recommended_shader_threads: number;
+  numa_nodes: number;
+  physical_cores: number;
+  logical_cores: number;
+  l3_cache_kb: number;
+  notes: string[];
+}

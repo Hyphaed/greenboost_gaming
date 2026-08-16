@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { SystemStatus, GpuInfo, GpuMetrics, InstallStreamProps, NvidiaUpdateStatus, PoolBrief } from "../types";
 import { Icon } from "../icons";
 import { InstallStreamModal } from "../components/InstallStreamModal";
+import { UpdateBanner } from "../components/UpdateBanner";
 
 type SessionRecord = {
   appid: string;
@@ -169,6 +170,8 @@ export function StatusView() {
   return (
     <div className="content-scroll">
       <div style={{ maxWidth: 700, margin: "0 auto" }}>
+        {/* Renders nothing unless something is actually out of date. */}
+        <UpdateBanner compact />
         <p className="section-title">My Gaming Rig</p>
         <div className="section-card">
           {status?.cpu_name && (

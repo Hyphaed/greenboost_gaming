@@ -19,6 +19,7 @@ mod nvml_reader;
 mod live_stats;
 mod nvidia_diag;
 mod directstorage;
+mod updates;
 
 use crate::scanner::{Game, HiddenGame, scan_games};
 use crate::optimizer::{SettingGroup, scan_game_settings, apply_optimization, revert_optimization, set_game_setting_impl};
@@ -113,6 +114,20 @@ fn unhide_game(path: String) -> Result<(), String> {
 #[tauri::command]
 fn list_hidden_games() -> Vec<HiddenGame> {
     scanner::load_hidden_games()
+}
+
+/// Check GitLab for newer releases of this Suite and of GreenBoost core.
+/// `force` skips the on-disk cache (the "Check now" button); the automatic
+/// check on app start passes false so we don't hit GitLab every launch.
+#[tauri::command]
+fn check_updates(force: Option<bool>) -> updates::UpdateReport {
+    updates::check_updates_impl(force.unwrap_or(false))
+}
+
+/// This binary's own version, so About doesn't carry a hand-maintained copy.
+#[tauri::command]
+fn get_suite_version() -> String {
+    updates::suite_version()
 }
 
 #[tauri::command]
@@ -441,6 +456,11 @@ struct GpuMetrics {
     vram_used_mb:   Option<u64>,
     vram_total_mb:  Option<u64>,
     fan_pct:        Option<u32>,
+    /// Human-readable throttle reasons from NVML. Empty = not throttling.
+    throttle_reasons: Vec<String>,
+    /// false when NVML couldn't tell us , distinct from "not throttling",
+    /// so the UI can stay quiet instead of implying the GPU is healthy.
+    throttle_known: bool,
 }
 
 #[tauri::command]
@@ -451,6 +471,7 @@ fn poll_gpu_metrics() -> GpuMetrics {
             clock_gpu_mhz: None, clock_mem_mhz: None,
             gpu_util_pct: None, mem_util_pct: None,
             vram_used_mb: None, vram_total_mb: None, fan_pct: None,
+            throttle_reasons: Vec::new(), throttle_known: false,
         },
         Some(s) => GpuMetrics {
             temp_c:        s.temp_gpu,
@@ -463,6 +484,11 @@ fn poll_gpu_metrics() -> GpuMetrics {
             vram_used_mb:  s.mem_used.map(|b| b >> 20),
             vram_total_mb: s.mem_total.map(|b| b >> 20),
             fan_pct:       s.fan_speed_avg(),
+            throttle_reasons: s.throttle_bits
+                .map(|b| crate::nvml_reader::throttle_reasons(b)
+                        .into_iter().map(str::to_string).collect())
+                .unwrap_or_default(),
+            throttle_known: s.throttle_bits.is_some(),
         },
     }
 }
@@ -674,6 +700,8 @@ fn main() {
 
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
+            check_updates,
+            get_suite_version,
             get_games,
             hide_game,
             unhide_game,

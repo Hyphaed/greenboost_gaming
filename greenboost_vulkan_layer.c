@@ -121,6 +121,14 @@ static float    nis_read_scale(void);
 
 /* ── Logging ──────────────────────────────────────────────────────────── */
 
+/* write(2) is declared __wur, and a bare (void) cast on the call does NOT
+ * satisfy that , GCC deliberately ignores it, which is where the
+ * -Wunused-result noise on every build came from. Binding the result and
+ * discarding the variable is the form GCC accepts. Ignoring the result is
+ * correct here on purpose: a short write or a failed write on a log or
+ * sysfs path must never perturb the game we're loaded into. */
+#define GB_IGNORE_WRITE(expr) do { ssize_t gb__n = (expr); (void)gb__n; } while (0)
+
 static int             g_gbvk_log_fd    = -1;
 static pthread_mutex_t g_gbvk_log_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -188,7 +196,7 @@ static void gbvk_emit(int level, const char *fmt, ...)
 
     if (g_gbvk_log_fd >= 0) {
         pthread_mutex_lock(&g_gbvk_log_mutex);
-        (void)write(g_gbvk_log_fd, buf, (size_t)len);
+        GB_IGNORE_WRITE(write(g_gbvk_log_fd, buf, (size_t)len));
         pthread_mutex_unlock(&g_gbvk_log_mutex);
     }
     syslog(level, "[VK_LAYER_GREENBOOST] %s", msg);

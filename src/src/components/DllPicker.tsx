@@ -33,8 +33,8 @@ export function DllPicker({
     invoke<CachedDll[]>("list_cached_dlls")
       .then(setCache)
       .catch(e => setMsg(`Cache read failed: ${e}`));
-    // refreshTrigger bumps specifically after "Update + set everything to
-    // latest" (Games.tsx's cacheRevision) completes , clear any manual
+    // refreshTrigger bumps specifically after "Upgrade" (Games.tsx's
+    // cacheRevision) completes , clear any manual
     // per-row picks so every select falls back to its default (newest
     // cached version, see `selected` below), matching what the update
     // just actually installed rather than a stale earlier manual choice.

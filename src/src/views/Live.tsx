@@ -2,8 +2,105 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Channel } from "@tauri-apps/api/core";
-import type { GpuMetrics, PoolBrief } from "../types";
+import type { GpuMetrics, PoolBrief, GpuInfo, ViewType } from "../types";
 import { Icon } from "../icons";
+
+// ─── throttle significance ───────────────────────────────────────────────────
+// NVML reports the truth, but not all of it is a problem worth interrupting
+// someone over. Measured on this box (RTX 5070, driver 595.84): at an idle
+// desktop , 14 W of a 250 W limit, 3% util , `nvidia-smi -q -d PERFORMANCE`
+// shows an SW-Power-Capping counter of 11,027 seconds. The bit flickers on
+// constantly while nothing is wrong. Rendering that as "GPU clock throttled"
+// is how a banner trains its user to ignore banners.
+//
+// So a reason has to clear three bars before it is shown:
+//   1. the GPU is actually doing work            (idle downclocking is fine)
+//   2. reason-specific plausibility              (see reasonIsReal below)
+//   3. it persists across consecutive polls      (kills single-tick flicker)
+
+const THROTTLE_MIN_UTIL_PCT  = 20;
+const POWER_CAP_NEAR_LIMIT   = 0.95;
+const THROTTLE_MIN_TICKS     = 3;
+
+function reasonIsReal(reason: string, m: GpuMetrics): boolean {
+  if (reason === "Power limit") {
+    // Only real when the card is genuinely drawing near its ceiling.
+    return m.power_w != null && m.power_limit_w != null && m.power_limit_w > 0
+        && m.power_w >= m.power_limit_w * POWER_CAP_NEAR_LIMIT;
+  }
+  // Thermal, power brake, hardware slowdown, sync boost, display clock:
+  // none of these have an idle false-positive mode worth filtering.
+  return true;
+}
+
+function significantReasons(m: GpuMetrics): string[] {
+  if (!m.throttle_known || m.throttle_reasons.length === 0) return [];
+  if ((m.gpu_util_pct ?? 0) < THROTTLE_MIN_UTIL_PCT) return [];
+  return m.throttle_reasons.filter(r => reasonIsReal(r, m));
+}
+
+/** What to tell the user, and what we can do about it, per reason. */
+type ThrottleAction =
+  | { kind: "power";   label: string; targetW: number }
+  | { kind: "fans";    label: string }
+  | { kind: "none" };
+
+/**
+ * @param raisableToW board maximum, but only when it is actually above the
+ *   limit currently in force , otherwise there is nothing to raise and
+ *   offering the button would be a lie.
+ */
+function throttleAdvice(reason: string, raisableToW: number | null): {
+  advice: string; action: ThrottleAction;
+} {
+  switch (reason) {
+    case "Thermal (hardware)":
+    case "Thermal (driver)":
+      return {
+        advice: "The GPU is cutting its own clocks to shed heat. More airflow "
+              + "fixes this; a lower power limit also works if the fans are "
+              + "already maxed.",
+        action: { kind: "fans", label: "Open fan curve" },
+      };
+    case "Hardware slowdown":
+      return {
+        advice: "The driver dropped clocks hard , usually an emergency thermal "
+              + "or power condition. Check airflow first.",
+        action: { kind: "fans", label: "Open fan curve" },
+      };
+    case "Power limit":
+      return raisableToW != null
+        ? { advice: "The card is holding at its power ceiling, so it can't boost "
+                  + "any higher. Raising the limit lets it draw more , within "
+                  + "what your PSU and cooling allow.",
+            action: { kind: "power", label: `Raise limit to ${raisableToW} W`, targetW: raisableToW } }
+        : { advice: "The card is holding at its power ceiling and is already at "
+                  + "the highest limit this board allows, so there is no headroom "
+                  + "left to give it. Better cooling is what buys clocks from here.",
+            action: { kind: "none" } };
+    case "Power brake (PSU/connector)":
+      return {
+        advice: "The board pulled its own power brake , this is a PSU or "
+              + "power-connector condition, not something software can raise "
+              + "around. Check the 12V connector is fully seated.",
+        action: { kind: "none" },
+      };
+    case "Sync boost group":
+      return {
+        advice: "Clocks are being held down to stay in sync with another GPU in "
+              + "a sync-boost group. Expected on multi-GPU setups.",
+        action: { kind: "none" },
+      };
+    case "Display clock":
+      return {
+        advice: "A display mode is holding a clock floor/ceiling. Usually a "
+              + "high-refresh or multi-monitor arrangement.",
+        action: { kind: "none" },
+      };
+    default:
+      return { advice: "The driver is holding clocks below maximum.", action: { kind: "none" } };
+  }
+}
 
 // ─── types ───────────────────────────────────────────────────────────────────
 
@@ -66,7 +163,8 @@ const MAX_POINTS = 60;
 function Sparkline({ series, color = "#22d3ee" }: { series: number[]; color?: string }) {
   if (series.length < 2) {
     return (
-      <svg width={SPARK_W} height={SPARK_H} style={{ display: "block" }}>
+      <svg width="100%" height={SPARK_H} viewBox={`0 0 ${SPARK_W} ${SPARK_H}`}
+           preserveAspectRatio="none" style={{ display: "block" }}>
         <text x={SPARK_W / 2} y={SPARK_H / 2 + 5} textAnchor="middle"
           fill="#4b5563" fontSize={12}>waiting for data…</text>
       </svg>
@@ -81,7 +179,8 @@ function Sparkline({ series, color = "#22d3ee" }: { series: number[]; color?: st
   const poly = pts.join(" ");
   const fill = `${pts[0]} ${SPARK_W},${SPARK_H - 4} 0,${SPARK_H - 4}`;
   return (
-    <svg width={SPARK_W} height={SPARK_H} style={{ display: "block", overflow: "visible" }}>
+    <svg width="100%" height={SPARK_H} viewBox={`0 0 ${SPARK_W} ${SPARK_H}`}
+         preserveAspectRatio="none" style={{ display: "block", overflow: "visible" }}>
       <defs>
         <linearGradient id="spark-grad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor={color} stopOpacity={0.25} />
@@ -128,7 +227,7 @@ function MemoryTierBar({ t1Used, t1Total, t2, t3 }: {
   const t1Warn = t1Pct > 90;
 
   return (
-    <div className="card" style={{ padding: "10px 14px" }}>
+    <div className="card" style={{ padding: "12px 16px" }}>
       <div style={{ fontSize: 11, fontWeight: 600, color: "#6b7280",
         textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
         Memory Tiers
@@ -176,7 +275,7 @@ function PoolBriefGauge({ brief }: { brief: PoolBrief | null }) {
   const pressureBad = brief != null && brief.t3_pressure !== "ok";
 
   return (
-    <div className="card" style={{ padding: "10px 14px" }}>
+    <div className="card" style={{ padding: "12px 16px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
         <span style={{ fontSize: 11, fontWeight: 600, color: "#6b7280",
           textTransform: "uppercase", letterSpacing: "0.05em" }}>
@@ -283,11 +382,17 @@ function summarizeDataflux(ev: Record<string, any>): string {
   }
 }
 
-export function LiveView() {
+export function LiveView({ onNavigate }: { onNavigate?: (v: ViewType) => void } = {}) {
   const [gamePid, setGamePid]       = useState<number | null>(null);
   const [stats, setStats]           = useState<LayerStats>(EMPTY_STATS);
   const [fpsSeries, setFpsSeries]   = useState<number[]>([]);
   const [logs, setLogs]             = useState<string[]>([]);
+  // Telemetry and the raw log used to share one row, with telemetry pinned
+  // to a hard-coded 380px column and the log taking everything else , so on
+  // any wide screen the numbers you actually watch were squeezed into a
+  // narrow strip while the log sprawled. They're tabs now: each gets the
+  // full width, and the log keeps streaming in the background either way.
+  const [liveTab, setLiveTab] = useState<"telemetry" | "log">("telemetry");
   const [streaming, setStreaming]   = useState(false);
   const [error, setError]           = useState<string | null>(null);
   const [recording, setRecording]   = useState(false);
@@ -305,10 +410,25 @@ export function LiveView() {
   const psoStallTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevPsoRef    = useRef<number>(0);
 
-  // Thermal throttle: track rolling peak clock; flag when temp high + clock drops.
+  // Throttle: NVML tells us the real reason. The rolling-peak-clock heuristic
+  // below is the fallback for drivers where NVML won't report it (throttle_known
+  // === false) , inference, and labelled as such in the banner.
   const peakClockRef  = useRef<number>(0);
-  const [thermalThrottle, setThermalThrottle] = useState(false);
+  const [throttle, setThrottle] = useState<{
+    reasons:  string[];
+    inferred: boolean;
+    /** Frozen at trigger time so the banner quotes the numbers that caused it. */
+    at:       { power_w: number | null; power_limit_w: number | null;
+                temp_c: number | null; clock_gpu_mhz: number | null };
+  } | null>(null);
   const throttleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const throttleTicks = useRef<number>(0);
+
+  // Power ceiling this card allows, for the "Raise limit" action. Read once ,
+  // it's a hardware property, not telemetry.
+  const [maxPowerW, setMaxPowerW] = useState<number | null>(null);
+  const [powerBusy, setPowerBusy] = useState(false);
+  const [actionNote, setActionNote] = useState<string | null>(null);
 
   const logsRef      = useRef<HTMLDivElement>(null);
   const channelRef   = useRef<Channel<string> | null>(null);
@@ -328,18 +448,36 @@ export function LiveView() {
             const next = [...prev, m.clock_gpu_mhz!];
             return next.length > MAX_POINTS ? next.slice(-MAX_POINTS) : next;
           });
-          // Thermal throttle: update peak; flag when temp ≥ 83°C and clock
-          // has dropped ≥ 8% below the session peak (NVIDIA boost throttle).
           if (m.clock_gpu_mhz > peakClockRef.current) peakClockRef.current = m.clock_gpu_mhz;
-          if (
-            m.temp_c != null && m.temp_c >= 83 &&
-            peakClockRef.current > 0 &&
-            m.clock_gpu_mhz < peakClockRef.current * 0.92
-          ) {
-            setThermalThrottle(true);
-            if (throttleTimer.current) clearTimeout(throttleTimer.current);
-            throttleTimer.current = setTimeout(() => setThermalThrottle(false), 12000);
+        }
+        // Real reason from NVML when the driver reports it; only guess when it
+        // doesn't. Either way the banner holds 12 s so a brief dip stays visible.
+        const flagThrottle = (reasons: string[], inferred: boolean) => {
+          setThrottle({
+            reasons, inferred,
+            at: { power_w: m.power_w, power_limit_w: m.power_limit_w,
+                  temp_c: m.temp_c, clock_gpu_mhz: m.clock_gpu_mhz },
+          });
+          if (throttleTimer.current) clearTimeout(throttleTimer.current);
+          throttleTimer.current = setTimeout(() => setThrottle(null), 12000);
+        };
+        if (m.throttle_known) {
+          const reasons = significantReasons(m);
+          if (reasons.length > 0) {
+            // Bar 3: only after it has held for a few consecutive polls.
+            throttleTicks.current += 1;
+            if (throttleTicks.current >= THROTTLE_MIN_TICKS) flagThrottle(reasons, false);
+          } else {
+            throttleTicks.current = 0;
           }
+        } else if (
+          m.clock_gpu_mhz != null &&
+          m.temp_c != null && m.temp_c >= 83 &&
+          peakClockRef.current > 0 &&
+          m.clock_gpu_mhz < peakClockRef.current * 0.92
+        ) {
+          // No NVML reason available , fall back to temp + clock-drop inference.
+          flagThrottle(["Thermal (inferred)"], true);
         }
         if (m.power_w != null) {
           setGpuPowerSeries(prev => {
@@ -352,6 +490,31 @@ export function LiveView() {
     tick();
     const t = setInterval(tick, 1000);
     return () => clearInterval(t);
+  }, []);
+
+  // Board power ceiling , only needed to label/act on a power-limit throttle.
+  useEffect(() => {
+    invoke<GpuInfo>("get_gpu")
+      .then(g => setMaxPowerW(g.power_limit_max > 0 ? Math.round(g.power_limit_max) : null))
+      .catch(() => { /* no nvidia-smi , the action button just won't offer */ });
+  }, []);
+
+  // Act on the throttle rather than only naming it. Raising the limit needs
+  // root (nvml_control.py via pkexec), so this can be declined , report that
+  // honestly instead of leaving the button looking like it worked.
+  const raisePowerLimit = useCallback(async (watts: number) => {
+    setPowerBusy(true);
+    setActionNote(null);
+    try {
+      await invoke<string>("set_power_limit", { watts });
+      setActionNote(`Power limit raised to ${watts} W.`);
+      throttleTicks.current = 0;
+      setThrottle(null);
+    } catch (e) {
+      setActionNote(String(e));
+    } finally {
+      setPowerBusy(false);
+    }
   }, []);
 
   // ── GreenBoost dataflux poll (5 s , same cadence as core's SnapshotRecorder) ─
@@ -532,6 +695,13 @@ export function LiveView() {
           gpuMetrics.power_w       != null ? `| Power | ${gpuMetrics.power_w.toFixed(1)} W |` : "",
           gpuMetrics.vram_used_mb  != null ? `| VRAM Used | ${gpuMetrics.vram_used_mb} MB |` : "",
           gpuMetrics.fan_pct       != null ? `| Fan | ${gpuMetrics.fan_pct} % |` : "",
+          // Never export a blank throttle row as "fine" , say when NVML is silent.
+          `| Throttle (NVML) | ${
+            !gpuMetrics.throttle_known ? "unknown , not reported by driver"
+              : gpuMetrics.throttle_reasons.length > 0
+                ? gpuMetrics.throttle_reasons.join(", ")
+                : "none"
+          } |`,
         ].filter(Boolean).join("\n")
       : "";
 
@@ -732,28 +902,118 @@ export function LiveView() {
         </div>
       )}
 
-      {thermalThrottle && (
-        <div style={{
-          background: "rgba(251,146,60,0.12)", border: "1px solid rgba(251,146,60,0.5)",
-          borderRadius: 6, padding: "8px 14px", color: "#fb923c", fontSize: 13,
-          display: "flex", alignItems: "center", gap: 10, flexShrink: 0,
-        }}>
-          <span style={{ fontSize: 16 }}>🌡</span>
-          <span>
-            <b>Thermal throttle detected</b> , GPU clock dropped ≥8% below session peak
-            while temperature ≥83°C. Raise fan speed in the Profile panel or reduce power limit.
-          </span>
-        </div>
-      )}
+      {throttle && (() => {
+        // Reasons arrive severity-ordered from the backend, so the first one
+        // is the one worth acting on.
+        const primary = throttle.reasons[0];
+        const { power_w, power_limit_w, temp_c, clock_gpu_mhz } = throttle.at;
+        // Only offer to raise the limit when there is headroom above the one
+        // currently in force.
+        const raisableToW = (maxPowerW != null && power_limit_w != null
+                             && maxPowerW > power_limit_w + 1) ? maxPowerW : null;
+        const { advice, action } = throttleAdvice(primary, raisableToW);
+        // The numbers that triggered it, so the claim is checkable on sight
+        // rather than something the user has to take on faith.
+        const facts = [
+          power_w != null && power_limit_w != null
+            ? `${power_w.toFixed(0)} W of ${power_limit_w.toFixed(0)} W` : null,
+          temp_c != null        ? `${temp_c} °C`            : null,
+          clock_gpu_mhz != null ? `${clock_gpu_mhz} MHz`    : null,
+        ].filter(Boolean).join("  ·  ");
+        const showAction = action.kind === "power"
+          || (action.kind === "fans" && onNavigate != null);
+
+        return (
+          <div style={{
+            background: "rgba(251,146,60,0.10)", border: "1px solid rgba(251,146,60,0.45)",
+            borderRadius: 8, padding: "12px 16px", flexShrink: 0,
+            display: "flex", alignItems: "flex-start", gap: 14,
+          }}>
+            <span style={{ fontSize: 18, lineHeight: "22px" }}>🌡</span>
+
+            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+              {/* headline: what, plus the reason as a chip , not buried in prose */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <b style={{ color: "#fb923c", fontSize: 13.5 }}>GPU clock throttled</b>
+                {throttle.reasons.map(r => (
+                  <span key={r} style={{
+                    background: "rgba(251,146,60,0.18)", color: "#fdba74",
+                    borderRadius: 4, padding: "1px 7px", fontSize: 11.5, fontWeight: 600,
+                  }}>{r}</span>
+                ))}
+                <span style={{ color: "#71717a", fontSize: 11.5 }}>
+                  {throttle.inferred
+                    ? "inferred , driver reports no reason"
+                    : "reported by the driver (NVML)"}
+                </span>
+              </div>
+
+              {/* the evidence */}
+              {facts && (
+                <div style={{ color: "#a1a1aa", fontSize: 12, fontVariantNumeric: "tabular-nums" }}>
+                  {facts}
+                </div>
+              )}
+
+              {/* what it means and what to do , one reason, one instruction */}
+              <div style={{ color: "#d4d4d8", fontSize: 12.5, lineHeight: 1.5 }}>{advice}</div>
+
+              {actionNote && (
+                <div style={{ color: "#a1a1aa", fontSize: 12 }}>{actionNote}</div>
+              )}
+            </div>
+
+            {showAction && (
+              <button
+                disabled={powerBusy}
+                onClick={() => {
+                  if (action.kind === "power") raisePowerLimit(action.targetW);
+                  else if (action.kind === "fans") onNavigate?.("profile");
+                }}
+                style={{
+                  flexShrink: 0, alignSelf: "center", whiteSpace: "nowrap",
+                  padding: "6px 14px", borderRadius: 5,
+                  cursor: powerBusy ? "default" : "pointer",
+                  background: powerBusy ? "rgba(251,146,60,0.06)" : "rgba(251,146,60,0.14)",
+                  border: "1px solid rgba(251,146,60,0.45)",
+                  color: powerBusy ? "#8a6440" : "#fdba74",
+                  fontSize: 12, fontWeight: 600,
+                }}
+              >
+                {powerBusy ? "Applying…" : action.label}
+              </button>
+            )}
+          </div>
+        );
+      })()}
 
       {/* main columns */}
+      <div className="sub-nav" style={{ flexShrink: 0 }}>
+        <button className={`sub-nav-tab${liveTab === "telemetry" ? " active" : ""}`}
+                onClick={() => setLiveTab("telemetry")}>Telemetry</button>
+        <button className={`sub-nav-tab${liveTab === "log" ? " active" : ""}`}
+                onClick={() => setLiveTab("log")}>
+          Layer log{logs.length > 0 ? ` (${logs.length})` : ""}
+          {streaming && <span style={{ color: "#22c55e", marginLeft: 6 }}>●</span>}
+        </button>
+      </div>
+
       <div style={{ flex: 1, display: "flex", gap: 16, overflow: "hidden", minHeight: 0 }}>
 
-        {/* left , chart + stats */}
-        <div style={{ width: 380, flexShrink: 0, display: "flex", flexDirection: "column", gap: 12 }}>
+        {/* Telemetry , full width, auto-fitting columns capped at 4.
+            Column sizing and the card chrome live in .telemetry-grid / .card
+            (index.css) rather than inline, because capping the track count
+            needs a max() in the track definition. */}
+        <div
+          className="telemetry-grid"
+          style={{
+            display: liveTab === "telemetry" ? "grid" : "none",
+            flex: 1, minWidth: 0, overflowY: "auto", paddingRight: 4,
+          }}
+        >
 
           {/* FPS sparkline card */}
-          <div className="card" style={{ padding: 16 }}>
+          <div className="card" style={{ padding: "12px 16px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
               <span style={{ color: "#9ca3af", fontSize: 12, textTransform: "uppercase",
                 letterSpacing: "0.05em" }}>FPS (last 60 s)</span>
@@ -767,7 +1027,7 @@ export function LiveView() {
 
           {/* GPU clock sparkline */}
           {gpuClockSeries.length > 1 && gpuMetrics && (
-            <div className="card" style={{ padding: 16 }}>
+            <div className="card" style={{ padding: "12px 16px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
                 <span style={{ color: "#9ca3af", fontSize: 12, textTransform: "uppercase",
                   letterSpacing: "0.05em" }}>GPU Clock</span>
@@ -783,7 +1043,7 @@ export function LiveView() {
 
           {/* GPU power sparkline */}
           {gpuPowerSeries.length > 1 && gpuMetrics && (
-            <div className="card" style={{ padding: 16 }}>
+            <div className="card" style={{ padding: "12px 16px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
                 <span style={{ color: "#9ca3af", fontSize: 12, textTransform: "uppercase",
                   letterSpacing: "0.05em" }}>GPU Power</span>
@@ -827,7 +1087,7 @@ export function LiveView() {
                 lineHeight: 1.5,
               }}>
                 Shader compilation stutter , gplasync reduces this.
-                Enable <b>dxvk-gplasync</b> in Global Settings if not already on.
+                Enable <b>Background shader compiling</b> in All Games if not already on.
               </div>
             )}
             <StatRow label="Present count" value={stats.present_count} />
@@ -846,7 +1106,7 @@ export function LiveView() {
 
           {/* ── GPU Metrics (NVML) ───────────────────────────────────────────── */}
           {gpuMetrics && (
-            <div style={{ marginTop: 16 }}>
+            <div className="card" style={{ padding: "12px 16px" }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: "#6b7280",
                             textTransform: "uppercase", letterSpacing: "0.05em",
                             marginBottom: 8 }}>
@@ -891,7 +1151,7 @@ export function LiveView() {
           )}
 
           {/* ── GreenBoost Activity (dataflux) ──────────────────────────────── */}
-          <div style={{ marginTop: 16 }}>
+          <div className="card" style={{ padding: "12px 16px" }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: "#6b7280",
                           textTransform: "uppercase", letterSpacing: "0.05em",
                           marginBottom: 8 }}>
@@ -903,7 +1163,7 @@ export function LiveView() {
                 sessions, or tier moves in the last window.
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div className="telemetry-log" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 {dataflux.map((ev, i) => (
                   <div key={i} style={{
                     display: "flex", alignItems: "baseline", gap: 8,
@@ -923,8 +1183,13 @@ export function LiveView() {
           </div>
         </div>
 
-        {/* right , raw log */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        {/* Layer log , its own tab now. Kept mounted rather than unmounted
+            so the stream, the 500-line ring buffer and the recording state
+            survive tab switches. */}
+        <div style={{
+          display: liveTab === "log" ? "flex" : "none",
+          flex: 1, flexDirection: "column", minWidth: 0,
+        }}>
           <div style={{ color: "#6b7280", fontSize: 12, marginBottom: 6,
             textTransform: "uppercase", letterSpacing: "0.05em", display: "flex", alignItems: "center", gap: 8 }}>
             <span>Layer log , {logs.length} lines</span>

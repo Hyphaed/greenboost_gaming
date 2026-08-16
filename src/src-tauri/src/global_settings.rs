@@ -108,7 +108,13 @@ impl Default for GlobalSettings {
             nis_scale:          default_nis_scale(),
             reflex_enable:      false,
             fps_cap:            0,
-            stream_priority:    false,
+            // Always on, and no longer user-visible. Gaming priority while a
+            // game runs is signalled through greenboost.ko's gaming_mode
+            // (set by the Proton wrapper, read by the CUDA shim); with no
+            // game running, inference should get the high-priority streams.
+            // Presenting that as a toggle offered a choice that neither
+            // outcome actually depended on.
+            stream_priority:    true,
             vk_debug:           false,
             nvapi_hud:          false,
             mangohud_enabled:   false,

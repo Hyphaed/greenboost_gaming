@@ -1303,8 +1303,19 @@ fn parse_mutter_display_config(text: &str) -> Vec<DisplayInfo> {
 
     // Extract monitor blocks: each starts with a connector name
     // Pattern: (('CONNECTOR', 'vendor', 'product', 'serial'), [...], {...})
-    let mon_re = Regex::new(r#"\(\('([^']+)',\s*'[^']*',\s*'[^']*',\s*'[^']*'\),\s*\[([^\]]*(?:\[[^\]]*\][^\]]*)*)\]"#).ok();
-    let mode_re = Regex::new(r#"'(\d+)x(\d+)@([\d.]+)(?:\+vrr)?',\s*\d+,\s*\d+,\s*[\d.]+,\s*[\d.]+,\s*\[[^\]]*\],\s*\{([^}]*)\}"#).ok();
+    // The modes array contains nested arrays (each mode's supported_scales),
+    // so the capture has to alternate "not a bracket" with "a complete
+    // [...] group". The previous `[^\]]*(?:\[[^\]]*\][^\]]*)*` stopped dead
+    // at the first `]` , the closing bracket of the FIRST mode's scales list
+    // , so `modes_text` was a 138-character fragment of one mode and the
+    // mode regex below matched nothing at all. Every display came back with
+    // an empty resolution list and no current mode on this path.
+    let mon_re = Regex::new(r#"\(\('([^']+)',\s*'[^']*',\s*'[^']*',\s*'[^']*'\),\s*\[((?:[^\[\]]|\[[^\]]*\])*)\]"#).ok();
+    // The `+vrr` suffix is captured (group 4) rather than discarded: mutter
+    // lists a fixed and a variable variant of every mode, so whether a given
+    // mode is the variable one is the only way to tell what VRR is actually
+    // doing right now. See the `vrr` vs `gsync_compatible` split below.
+    let mode_re = Regex::new(r#"'(\d+)x(\d+)@([\d.]+)(\+vrr)?',\s*\d+,\s*\d+,\s*[\d.]+,\s*[\d.]+,\s*\[[^\]]*\],\s*\{([^}]*)\}"#).ok();
 
     // Collect primary + enabled connectors from logical_monitors section.
     // The logical_monitors section appears after the main monitors list.
@@ -1349,7 +1360,12 @@ fn parse_mutter_display_config(text: &str) -> Vec<DisplayInfo> {
             let mut current_mode = String::new();
             let mut current_rate = 0.0f32;
             let mut all_modes: Vec<(String, Vec<f32>)> = Vec::new();
+            // Capability: this output offers a variable variant of some mode.
             let mut has_vrr_mode = false;
+            // State: the mode currently driving the output IS a variable one.
+            // These are emphatically not the same thing , conflating them is
+            // what made the toggle read ON on hardware with VRR switched off.
+            let mut vrr_active = false;
 
             // Group modes by resolution
             let mut res_map: std::collections::BTreeMap<String, Vec<f32>> =
@@ -1359,7 +1375,8 @@ fn parse_mutter_display_config(text: &str) -> Vec<DisplayInfo> {
                 let w = mcap.get(1).map_or("0", |m| m.as_str());
                 let h = mcap.get(2).map_or("0", |m| m.as_str());
                 let r_str = mcap.get(3).map_or("0", |m| m.as_str());
-                let props = mcap.get(4).map_or("", |m| m.as_str());
+                let is_vrr_variant = mcap.get(4).is_some();
+                let props = mcap.get(5).map_or("", |m| m.as_str());
                 let rate: f32 = r_str.parse().unwrap_or(0.0);
                 let res = format!("{w}x{h}");
 
@@ -1371,6 +1388,9 @@ fn parse_mutter_display_config(text: &str) -> Vec<DisplayInfo> {
                 if props.contains("is-current") && props.contains("true") {
                     current_mode = format!("{w}x{h}");
                     current_rate = rate;
+                    // mutter marks the variable variant current only while VRR
+                    // is genuinely engaged on the output.
+                    vrr_active = is_vrr_variant;
                 }
 
                 res_map.entry(res).or_default().push(rate);
@@ -1395,8 +1415,13 @@ fn parse_mutter_display_config(text: &str) -> Vec<DisplayInfo> {
                                 .map(|(r, rates)| crate::manager::DisplayMode {
                                     resolution: r, rates })
                                 .collect(),
-                gsync_compatible: vrr_drm,
-                vrr:          has_vrr_mode,
+                // On NVIDIA there is no `vrr_capable` node under /sys/class/drm
+                // at all (verified on the open driver, 595.84), so the DRM probe
+                // alone reports "not capable" for a monitor mutter is actively
+                // offering variable modes for. mutter advertising a +vrr variant
+                // is the stronger signal , OR them rather than trusting sysfs.
+                gsync_compatible: vrr_drm || has_vrr_mode,
+                vrr:          vrr_active,
                 connector:    connector,
                 width_mm:     0,
                 height_mm:    0,

@@ -138,6 +138,14 @@ static void gb_gl_fini_logging(void)
     if (g_gb_gl_log_fd >= 0) { close(g_gb_gl_log_fd); g_gb_gl_log_fd = -1; }
 }
 
+/* write(2) is declared __wur, and a bare (void) cast on the call does NOT
+ * satisfy that , GCC deliberately ignores it, which is where the
+ * -Wunused-result noise on every build came from. Binding the result and
+ * discarding the variable is the form GCC accepts. Ignoring the result is
+ * correct here on purpose: a short write or a failed write on a log or
+ * sysfs path must never perturb the game we're loaded into. */
+#define GB_IGNORE_WRITE(expr) do { ssize_t gb__n = (expr); (void)gb__n; } while (0)
+
 static void gb_gl_emit(int level, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
 static void gb_gl_emit(int level, const char *fmt, ...)
@@ -162,11 +170,11 @@ static void gb_gl_emit(int level, const char *fmt, ...)
 
     if (g_gb_gl_log_fd >= 0) {
         pthread_mutex_lock(&g_gb_gl_log_mu);
-        (void)write(g_gb_gl_log_fd, buf, (size_t)len);
+        GB_IGNORE_WRITE(write(g_gb_gl_log_fd, buf, (size_t)len));
         pthread_mutex_unlock(&g_gb_gl_log_mu);
     }
     syslog(level, "[GB_GL] %s", msg);
-    (void)write(STDERR_FILENO, buf, (size_t)len);
+    GB_IGNORE_WRITE(write(STDERR_FILENO, buf, (size_t)len));
 }
 
 #define gb_log(fmt, ...) gb_gl_emit(LOG_INFO,  fmt, ##__VA_ARGS__)
@@ -361,7 +369,7 @@ static void gb_gl_gaming_on(void)
         ioctl(fd, GB_IOCTL_SESSION_ACTIVE, &sr);
     }
     int sfd = open("/sys/module/greenboost/parameters/gaming_mode", O_WRONLY | O_CLOEXEC);
-    if (sfd >= 0) { (void)write(sfd, "1", 1); close(sfd); }
+    if (sfd >= 0) { GB_IGNORE_WRITE(write(sfd, "1", 1)); close(sfd); }
     gb_log("gaming_mode ON , inference T2 deprioritised");
 }
 
@@ -376,7 +384,7 @@ static void gb_gl_gaming_off(void)
         ioctl(fd, GB_IOCTL_SESSION_IDLE, &sr);
     }
     int sfd = open("/sys/module/greenboost/parameters/gaming_mode", O_WRONLY | O_CLOEXEC);
-    if (sfd >= 0) { (void)write(sfd, "0", 1); close(sfd); }
+    if (sfd >= 0) { GB_IGNORE_WRITE(write(sfd, "0", 1)); close(sfd); }
     gb_log("gaming_mode OFF");
 }
 

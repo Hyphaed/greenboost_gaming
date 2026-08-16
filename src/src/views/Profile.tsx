@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { patchGlobalSettings } from "../store/globalSettings";
 import type { GpuInfo, InstallStreamProps, Game, GameOverrides } from "../types";
 import { Icon } from "../icons";
 import { InstallStreamModal } from "../components/InstallStreamModal";
@@ -489,10 +490,7 @@ export function GpuProfileView() {
       // Apply topology-derived shader thread recommendation to global settings.
       if (rec.recommended_shader_threads > 0) {
         try {
-          const gs = await invoke<Record<string, unknown>>("get_global_settings");
-          await invoke("save_global_settings", {
-            settings: { ...gs, shader_threads: rec.recommended_shader_threads },
-          });
+          await patchGlobalSettings({ shader_threads: rec.recommended_shader_threads });
         } catch { /* non-fatal , GPU OC still applied */ }
       }
 

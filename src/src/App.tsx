@@ -3,8 +3,10 @@
 // endorsed by, or sponsored by NVIDIA Corporation.
 // NVIDIA, CUDA, GeForce, and RTX are trademarks of NVIDIA Corporation.
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { ViewType } from "./types";
+import { loadGlobalSettings } from "./store/globalSettings";
+import { checkForUpdates } from "./store/updates";
 import { Sidebar } from "./components/Sidebar";
 import { StatusView } from "./views/Status";
 import { GamesView } from "./views/Games";
@@ -25,13 +27,21 @@ const VIEW_LABELS: Record<ViewType, string> = {
 export default function App() {
   const [view, setView] = useState<ViewType>("status");
 
+  // Warm the shared stores once for the whole session. Views used to each
+  // fetch their own copy on mount, which meant navigating re-fetched
+  // everything and left views disagreeing about the same settings.
+  useEffect(() => {
+    loadGlobalSettings();
+    checkForUpdates(false);
+  }, []);
+
   const renderContent = () => {
     switch (view) {
       case "status":   return <StatusView />;
       case "games":    return <GamesView />;
       case "displays": return <DisplaysView />;
       case "profile":  return <GpuProfileView />;
-      case "live":     return <LiveView />;
+      case "live":     return <LiveView onNavigate={setView} />;
       case "about":    return <AboutView />;
     }
   };

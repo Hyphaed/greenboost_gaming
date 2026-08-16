@@ -121,10 +121,6 @@ export const GS_INFO: Record<string, string> = {
     + "Reflex above tends to feel smoother and lower-lag than uncapped , "
     + "counterintuitive, but this is a well-known Reflex-specific "
     + "interaction, not a general rule.",
-  "Prioritize AI inference work":
-    "Has zero effect unless you're also running local AI inference on "
-    + "this same machine at the same time as a game , most players will "
-    + "never need to touch this.",
 
   // ── NIS SECTION ──────────────────────────────────────────────────────
   "Sharpness":
@@ -241,7 +237,7 @@ export const GS_INFO: Record<string, string> = {
 // arg. Only present for settings with a genuine, provable benefit; a
 // missing entry here is deliberate, not an oversight (see B3 in
 // enhance_gaming.md , don't invent a benefit for neutral/situational
-// settings). Reused verbatim from AddedByGreenBoost.tsx's `tagline` field
+// settings). Reused verbatim from gbFeatures.ts' GB_AUTOMATIC `tagline`
 // where the row IS that exact feature, so the two panels never describe
 // the same thing in two different ways.
 export const GS_BENEFIT: Record<string, string> = {
@@ -259,4 +255,79 @@ export const GS_BENEFIT: Record<string, string> = {
     "A universal sharpen/upscale layer that works even when a game has no upscaler of its own.",
   "Always use newest DLSS files":
     "Every version you've ever fetched stays available , pick any of them, per game.",
+};
+
+// ── Which Global Settings rows are GreenBoost's own ──────────────────────
+//
+// Keys are row labels (same keying as GS_INFO / GS_BENEFIT above); the value
+// is the All Games section it lives in, shown on the badge tooltip.
+// row() reads this map itself to decide whether to draw the GreenBoost chip,
+// so adding a row here is the only step needed to badge it.
+//
+// Presence in this map IS the claim "this is GreenBoost-exclusive", and the
+// test for it is mechanical, not editorial: the setting either produces a
+// GREENBOOST_* env var (see as_env_dict() in gb_gaming/global_settings.py ,
+// only our own Vulkan/GL layer and Proton wrapper read those, so on a
+// machine without GreenBoost the value goes nowhere), or it has no env var
+// at all because the app performs the action itself.
+//
+// Deliberately absent, and they must stay absent , these are passthroughs
+// that a user could set by hand and that work without GreenBoost installed:
+//   DLSS Model Version           -> DXVK_NVAPI_DRS_NGX_DLSS_SR_OVERRIDE
+//   HDR (High Dynamic Range)     -> ENABLE_HDR_WSI
+//   Wayland                      -> PROTON_ENABLE_WAYLAND
+//   DLSS indicator overlay       -> PROTON_DLSS_INDICATOR
+//   Always use newest DLSS files -> PROTON_DLSS_UPGRADE
+//   FPS cap                      -> DXVK_FRAME_RATE
+//   DirectX 12 feature flags     -> VKD3D_CONFIG
+// Detected GPU / Session are read-only and carry no claim either way.
+export const GS_ADDED_BY_GB: Record<string, string> = {
+  // DRIVER SETTINGS , app-implemented, no env var
+  "Cinema mode on launch": "Display & session",
+
+  // GREENBOOST RUNTIME , VULKAN LAYER
+  "Remember compiled shaders": "Performance & stutter",
+  "Give the game GPU priority": "Performance & stutter",
+  "Protect game memory under pressure": "Gaming alongside local AI",
+  "NIS sharpening , ready to use": "Image quality & upscaling",
+  "NIS sharpening , actually apply it": "Image quality & upscaling",
+
+  // GREENBOOST RUNTIME , OPENGL LAYER
+  "Enable OpenGL support": "Memory & VRAM overflow",
+  "Overflow threshold (MB)": "Memory & VRAM overflow",
+
+  // GREENBOOST RUNTIME , PROTON + SYSTEM
+  "Background shader compiling": "Performance & stutter",
+  "Performance lock (CPU + GPU)": "Performance & stutter",
+  "Pause desktop effects while playing": "Performance & stutter",
+  "Pre-warm overflow memory": "Memory & VRAM overflow",
+  "Remove memory-locking limit": "Memory & VRAM overflow",
+  "Performance overlay (GPU + FPS)": "Overlays & visibility",
+  "Show NVIDIA feature status overlay": "Overlays & visibility",
+
+  // FRAME PACING + LATENCY
+  "NVIDIA Reflex (lower input lag)": "Latency & frame pacing",
+
+  // NIS , NVIDIA IMAGE SCALING
+  "Sharpness": "Image quality & upscaling",
+  "Upscale ratio": "Image quality & upscaling",
+
+  // ALWAYS ON , NOTHING TO SWITCH. These are GB_AUTOMATIC titles from
+  // gbFeatures.ts rather than literal row() call sites, so a grep for
+  // row("<label>" won't find them , they're rendered from that array.
+  "GPU memory overflow to system RAM (T1/T2/T3 tiering)": "Always on , nothing to switch",
+  "Multi-version DLSS/Streamline library cache": "Always on , nothing to switch",
+  "\"Upgraded from shipped\" tracking on every DLSS file": "Always on , nothing to switch",
+  "Driver update status: checked vs. update available": "Always on , nothing to switch",
+  "DirectStorage awareness": "Always on , nothing to switch",
+  "Gaming outranks local AI while a game is running": "Always on , nothing to switch",
+
+  // ADVANCED
+  "Verbose Vulkan logging": "Advanced & diagnostics",
+  "VRAM headroom before overflow (MB)": "Memory & VRAM overflow",
+  "Minimum reserved disk space (MB)": "Memory & VRAM overflow",
+  "Keep session logs for (days)": "Advanced & diagnostics",
+  "Shader compile threads": "Performance & stutter",
+  "Shader cache size limit (GB)": "Performance & stutter",
+  "Pin a specific shader-compiler version": "Advanced & diagnostics",
 };

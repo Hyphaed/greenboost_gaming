@@ -41,6 +41,44 @@ pub struct NvmlSnapshot {
     pub gpu_util:       Option<u32>,   // %
     pub mem_util:       Option<u32>,   // %
     pub fan_speeds:     Vec<u32>,      // per-fan %
+    /// Raw bitmask from nvmlDeviceGetCurrentClocksThrottleReasons.
+    /// None when the symbol or the call is unavailable , which is NOT the
+    /// same as "not throttling", and the UI must not render it as such.
+    pub throttle_bits:  Option<u64>,
+}
+
+// nvmlClocksThrottleReasons , NVML API Reference, bitmask values.
+// Only the ones worth showing a gamer are named; the rest fall under
+// "other" rather than being silently dropped.
+#[allow(dead_code)] // documented for completeness; deliberately not surfaced
+pub const THROTTLE_GPU_IDLE:            u64 = 0x0000000000000001;
+#[allow(dead_code)] // ditto , see throttle_reasons() below
+pub const THROTTLE_APP_CLOCKS_SETTING:  u64 = 0x0000000000000002;
+pub const THROTTLE_SW_POWER_CAP:        u64 = 0x0000000000000004;
+pub const THROTTLE_HW_SLOWDOWN:         u64 = 0x0000000000000008;
+pub const THROTTLE_SYNC_BOOST:          u64 = 0x0000000000000010;
+pub const THROTTLE_SW_THERMAL:          u64 = 0x0000000000000020;
+pub const THROTTLE_HW_THERMAL:          u64 = 0x0000000000000040;
+pub const THROTTLE_HW_POWER_BRAKE:      u64 = 0x0000000000000080;
+pub const THROTTLE_DISPLAY_CLOCK:       u64 = 0x0000000000000100;
+
+/// Human-readable reasons a GPU is below its maximum clock, most
+/// performance-relevant first.
+///
+/// GPU_IDLE and APP_CLOCKS_SETTING are deliberately excluded: idle is not
+/// throttling, and an application clock setting is the user's own doing.
+/// Reporting either as "throttled" is how a monitoring tool teaches people
+/// to ignore it.
+pub fn throttle_reasons(bits: u64) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if bits & THROTTLE_HW_THERMAL      != 0 { out.push("Thermal (hardware)"); }
+    if bits & THROTTLE_SW_THERMAL      != 0 { out.push("Thermal (driver)"); }
+    if bits & THROTTLE_HW_POWER_BRAKE  != 0 { out.push("Power brake (PSU/connector)"); }
+    if bits & THROTTLE_SW_POWER_CAP    != 0 { out.push("Power limit"); }
+    if bits & THROTTLE_HW_SLOWDOWN     != 0 { out.push("Hardware slowdown"); }
+    if bits & THROTTLE_SYNC_BOOST      != 0 { out.push("Sync boost group"); }
+    if bits & THROTTLE_DISPLAY_CLOCK   != 0 { out.push("Display clock"); }
+    out
 }
 
 impl NvmlSnapshot {
@@ -60,6 +98,7 @@ type FnGetClock  = unsafe extern "C" fn(NvmlDevice, u32, *mut u32) -> NvmlReturn
 type FnGetMem    = unsafe extern "C" fn(NvmlDevice, *mut NvmlMemory) -> NvmlReturn;
 type FnGetUtil   = unsafe extern "C" fn(NvmlDevice, *mut NvmlUtilization) -> NvmlReturn;
 type FnGetFanV2  = unsafe extern "C" fn(NvmlDevice, u32, *mut u32) -> NvmlReturn;
+type FnGetU64    = unsafe extern "C" fn(NvmlDevice, *mut u64) -> NvmlReturn;
 
 unsafe fn load_fn<T: Copy>(lib: &libloading::Library, name: &[u8]) -> Option<T> {
     lib.get::<T>(name).ok().map(|s| *s)
@@ -87,6 +126,13 @@ pub fn read_snapshot() -> Option<NvmlSnapshot> {
     let get_util:      Option<FnGetUtil>  = unsafe { load_fn(&lib, b"nvmlDeviceGetUtilizationRates\0") };
     let get_num_fans:  Option<FnGetU32>   = unsafe { load_fn(&lib, b"nvmlDeviceGetNumFans\0") };
     let get_fan_v2:    Option<FnGetFanV2> = unsafe { load_fn(&lib, b"nvmlDeviceGetFanSpeed_v2\0") };
+    // Driver 495+ renamed this to ...CurrentClocksEventReasons and kept the
+    // old name as an alias. Try the new spelling first so we keep working if
+    // the alias is ever dropped, then fall back for older drivers.
+    let get_throttle: Option<FnGetU64> = unsafe {
+        load_fn(&lib, b"nvmlDeviceGetCurrentClocksEventReasons\0")
+            .or_else(|| load_fn(&lib, b"nvmlDeviceGetCurrentClocksThrottleReasons\0"))
+    };
 
     // Initialize NVML.
     if unsafe { nvml_init() } != NVML_SUCCESS { return None; }
@@ -161,6 +207,14 @@ pub fn read_snapshot() -> Option<NvmlSnapshot> {
         _ => Vec::new(),
     };
 
+    // Real reason the clock is where it is, straight from the driver ,
+    // no inference from temperature and clock deltas. Must be read while
+    // NVML is still initialized , `device` is invalid after shutdown.
+    let throttle_bits = get_throttle.and_then(|f| {
+        let mut v: u64 = 0;
+        if unsafe { f(device, &mut v) } == NVML_SUCCESS { Some(v) } else { None }
+    });
+
     unsafe { nvml_shutdown() };
 
     Some(NvmlSnapshot {
@@ -176,5 +230,6 @@ pub fn read_snapshot() -> Option<NvmlSnapshot> {
         gpu_util,
         mem_util,
         fan_speeds,
+        throttle_bits,
     })
 }

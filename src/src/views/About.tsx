@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { loadGlobalSettings, patchGlobalSettings } from "../store/globalSettings";
 import type { CachedDll } from "../types";
+import { UpdateBanner } from "../components/UpdateBanner";
 
 const DISCLAIMER = "GreenBoost is an independent open-source project and is not affiliated with, endorsed by, or sponsored by NVIDIA Corporation. NVIDIA, CUDA, GeForce, and RTX are trademarks of NVIDIA Corporation.";
 
@@ -33,6 +35,11 @@ const DLL_ORDER = [
 ];
 
 export function AboutView() {
+  // Read from the binary (CARGO_PKG_VERSION) rather than hardcoded here.
+  // The literal that used to sit in this file said 26.04.26 while the crate,
+  // the Tauri config and the git tag all said 0.1.0 , so the About panel was
+  // reporting a version that had never been released.
+  const [suiteVersion, setSuiteVersion] = useState("");
   const [perfMode, setPerfMode] = useState(false);
   const [perfMsg, setPerfMsg]   = useState<string | null>(null);
   const [tab, setTab] = useState<"about" | "preferences">("about");
@@ -41,18 +48,9 @@ export function AboutView() {
   const [dlssLoading, setDlssLoading] = useState(false);
   const [dlssMsg, setDlssMsg] = useState<string | null>(null);
 
-  type DlssTag = { tag: string; name: string; date: string };
-  type DlssVersionData = {
-    nvngx: DlssTag[];
-    streamline: DlssTag[];
-    nvngx_pinned: string;
-    streamline_pinned: string;
-  };
-  const [dlssVersions, setDlssVersions] = useState<DlssVersionData | null>(null);
-  const [dlssVerLoading, setDlssVerLoading] = useState(false);
-  const [dlssVerMsg, setDlssVerMsg] = useState<string | null>(null);
-  const [pinNvngx, setPinNvngx] = useState("");
-  const [pinStreamline, setPinStreamline] = useState("");
+  // DLSS version pinning used to live here. It moved to Games → DLSS
+  // Libraries, next to the Fetch Latest button whose behaviour it governs ,
+  // in About it read as provenance trivia rather than a live control.
 
   const loadDlls = useCallback(async () => {
     setDlssLoading(true);
@@ -66,14 +64,16 @@ export function AboutView() {
   }, []);
 
   useEffect(() => {
-    invoke<{ perf_mode: boolean }>("get_global_settings")
-      .then(s => setPerfMode(s.perf_mode))
-      .catch(() => {
-        invoke<{ cpu_governor: string }>("get_status")
+    loadGlobalSettings()
+      .then(s => {
+        if (s) { setPerfMode(s.perf_mode); return; }
+        return invoke<{ cpu_governor: string }>("get_status")
           .then(st => setPerfMode(st.cpu_governor === "performance"))
           .catch(() => {});
-      });
+      })
+      .catch(() => {});
     loadDlls();
+    invoke<string>("get_suite_version").then(setSuiteVersion).catch(() => {});
   }, [loadDlls]);
 
   const togglePerf = async () => {
@@ -82,37 +82,10 @@ export function AboutView() {
       const m: string = await invoke("set_perf_mode", { enabled: next });
       setPerfMode(next);
       setPerfMsg(m);
-      const settings = await invoke<Record<string, unknown>>("get_global_settings");
-      await invoke("save_global_settings", { settings: { ...settings, perf_mode: next } });
+      // Patch one field through the store. The old read-modify-write of the
+      // whole object clobbered any setting changed elsewhere in between.
+      await patchGlobalSettings({ perf_mode: next });
     } catch (e: any) { setPerfMsg(e?.message ?? "Failed (sudo required)"); }
-  };
-
-  const fetchDlssVersions = async () => {
-    setDlssVerLoading(true);
-    setDlssVerMsg(null);
-    try {
-      const data = await invoke<DlssVersionData>("list_dlss_versions");
-      setDlssVersions(data);
-      setPinNvngx(data.nvngx_pinned ?? "");
-      setPinStreamline(data.streamline_pinned ?? "");
-    } catch (e: any) {
-      setDlssVerMsg("Failed to fetch versions: " + (e?.message ?? String(e)));
-    }
-    setDlssVerLoading(false);
-  };
-
-  const applyDlssPins = async () => {
-    setDlssVerMsg(null);
-    try {
-      await invoke("set_dlss_pinned_tags", { nvngxTag: pinNvngx, streamlineTag: pinStreamline });
-      setDlssVerMsg(
-        (pinNvngx || pinStreamline)
-          ? "Pinned versions saved. Next DLSS sync will use these tags."
-          : "Pins cleared , next sync will use the latest releases."
-      );
-    } catch (e: any) {
-      setDlssVerMsg("Failed to save pins: " + (e?.message ?? String(e)));
-    }
   };
 
   const dllByName = (name: string): CachedDll | undefined =>
@@ -134,7 +107,7 @@ export function AboutView() {
               <p className="section-title">About GreenBoost Gaming Suite</p>
               <div className="section-card">
                 <p style={{ fontSize: 13, color: "#e6e6e6", lineHeight: 1.7, margin: "0 0 6px" }}>
-                  Version 26.04.26 , GreenBoost Gaming Suite
+                  Version {suiteVersion || "…"} , GreenBoost Gaming Suite
                 </p>
                 <p style={{ fontSize: 13, color: "#9a9a9a", lineHeight: 1.7, margin: "0 0 12px" }}>
                   Copyright 2026 Ferran Duarri.
@@ -155,6 +128,8 @@ export function AboutView() {
                   </a>
                 </div>
               </div>
+
+              <UpdateBanner />
 
               <p className="section-title" style={{ marginTop: 24 }}>
                 DLSS DLL provenance
@@ -260,99 +235,11 @@ export function AboutView() {
                 }}>
                   Versions shown are from the local cache (
                   <code>~/.local/share/greenboost-gaming/libraries/</code>).
-                  Use <b>Update DLSS</b> in Game Settings to fetch newest releases
+                  Use <b>Upgrade</b> in This Game to fetch newest releases
                   from NVIDIA's official GitHub repositories.
                 </div>
               </div>
 
-              <p className="section-title" style={{ marginTop: 24 }}>
-                DLSS Version Pinning
-              </p>
-              <div className="section-card">
-                <p style={{ fontSize: 12, color: "#8a9ab0", margin: "0 0 14px" }}>
-                  Pin a specific release tag for DLSS or Streamline DLLs.
-                  Leave blank to always use the latest release when syncing.
-                </p>
-
-                {!dlssVersions ? (
-                  <button
-                    className="btn-primary"
-                    onClick={fetchDlssVersions}
-                    disabled={dlssVerLoading}
-                    style={{ fontSize: 12 }}
-                  >
-                    {dlssVerLoading ? "Fetching…" : "Fetch Available Versions"}
-                  </button>
-                ) : (
-                  <>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ fontSize: 12, color: "#9a9ab0", minWidth: 140, flexShrink: 0 }}>
-                          DLSS <span style={{ color: "#5a7a9a", fontSize: 11 }}>nvngx_*.dll</span>
-                        </span>
-                        <select
-                          value={pinNvngx}
-                          onChange={e => setPinNvngx(e.target.value)}
-                          className="setting-select"
-                          style={{ fontSize: 12, flex: 1 }}
-                        >
-                          <option value="">Latest</option>
-                          {dlssVersions.nvngx.map(t => (
-                            <option key={t.tag} value={t.tag}>{t.tag}</option>
-                          ))}
-                          {dlssVersions.nvngx.length === 0 && (
-                            <option disabled>No tags fetched</option>
-                          )}
-                        </select>
-                      </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ fontSize: 12, color: "#9a9ab0", minWidth: 140, flexShrink: 0 }}>
-                          Streamline <span style={{ color: "#5a7a9a", fontSize: 11 }}>sl.*.dll</span>
-                        </span>
-                        <select
-                          value={pinStreamline}
-                          onChange={e => setPinStreamline(e.target.value)}
-                          className="setting-select"
-                          style={{ fontSize: 12, flex: 1 }}
-                        >
-                          <option value="">Latest</option>
-                          {dlssVersions.streamline.map(t => (
-                            <option key={t.tag} value={t.tag}>
-                              {t.tag}{t.date ? ` , ${t.date}` : ""}
-                            </option>
-                          ))}
-                          {dlssVersions.streamline.length === 0 && (
-                            <option disabled>No releases fetched</option>
-                          )}
-                        </select>
-                      </div>
-                    </div>
-                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                      <button
-                        className="btn-primary"
-                        onClick={applyDlssPins}
-                        style={{ fontSize: 12 }}
-                      >
-                        Apply
-                      </button>
-                      <button
-                        className="btn-secondary"
-                        onClick={fetchDlssVersions}
-                        disabled={dlssVerLoading}
-                        style={{ fontSize: 12 }}
-                      >
-                        {dlssVerLoading ? "…" : "Refresh"}
-                      </button>
-                    </div>
-                  </>
-                )}
-
-                {dlssVerMsg && (
-                  <p style={{ fontSize: 11, color: "#8a9ab0", margin: "10px 0 0" }}>
-                    {dlssVerMsg}
-                  </p>
-                )}
-              </div>
             </>
           )}
         </div>

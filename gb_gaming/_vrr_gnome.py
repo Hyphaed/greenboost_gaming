@@ -113,7 +113,7 @@ def set_vrr(connector: str, enable: bool) -> int:
         "GetCurrentState", None,
         Gio.DBusCallFlags.NONE, -1, None,
     )
-    serial, monitors, logical_monitors, _props = state.unpack()
+    serial, monitors, logical_monitors, state_props = state.unpack()
 
     # Find the target monitor + the new mode id to use.
     new_mode_id = None
@@ -127,12 +127,24 @@ def set_vrr(connector: str, enable: bool) -> int:
         # Find the currently-active mode (it has 'is-current': True).
         cur_w = cur_h = 0
         cur_rate = 0.0
+        cur_rrm = "fixed"
         for mode in modes:
             mode_id, w, h, rate, _pref, _scales, props = mode
             if props.get("is-current"):
                 current_mode_id = mode_id
                 cur_w, cur_h, cur_rate = w, h, rate
+                cur_rrm = props.get("refresh-rate-mode") or "fixed"
                 break
+
+        # Already in the requested state , do nothing. Applying the mode we
+        # are already in is still a full modeset: on DisplayPort that drops
+        # the link, so the monitor blanks and reports "no signal" for a
+        # second or two before re-syncing. Doing that to land on the state
+        # the output was already in is pure disruption for no change.
+        if cur_rrm == target_mode:
+            print(f"VRR already {'enabled' if enable else 'disabled'} for "
+                  f"{connector_name} , left alone (no modeset)")
+            return 0
 
         # If we couldn't identify the current mode, abort early , applying
         # a config without anchoring to the user's current resolution risks
@@ -195,8 +207,18 @@ def set_vrr(connector: str, enable: bool) -> int:
             "(iiduba(ssa{sv}))",
             (x, y, scale, transform, primary, new_outputs)))
 
+    # Carry the session's current layout-mode through. ApplyMonitorsConfig
+    # falls back to the backend default when the property is absent, so
+    # omitting it can silently switch the session between logical and
+    # physical layout , which re-lays-out and therefore modesets EVERY
+    # output, not just the one being toggled.
+    apply_props = {}
+    layout_mode = state_props.get("layout-mode")
+    if layout_mode is not None:
+        apply_props["layout-mode"] = GLib.Variant("u", layout_mode)
+
     config = GLib.Variant("(uua(iiduba(ssa{sv}))a{sv})",
-                          (serial, METHOD_PERSISTENT, new_logical, {}))
+                          (serial, METHOD_PERSISTENT, new_logical, apply_props))
     try:
         proxy.call_sync(
             "ApplyMonitorsConfig", config,

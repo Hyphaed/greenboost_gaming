@@ -688,12 +688,23 @@ export function DisplaysView() {
                            const next = !selected.vrr;
                            const msg: string = await invoke("apply_display_vrr",
                              { name: selected.name, enabled: next });
-                           // apply_display_vrr succeeding doesn't update `selected`/
-                           // `displays` on its own , the toggle's checked state reads
-                           // selected.vrr, so without this the switch visually stays
-                           // off after a real, successful enable.
-                           setSelected(s => s ? { ...s, vrr: next } : s);
-                           setDisplays(ds => ds.map(d => d.name === selected.name ? { ...d, vrr: next } : d));
+                           // Re-read rather than assume the write landed. Toggling
+                           // VRR is a real modeset, and the compositor is the only
+                           // authority on whether the output came back up in the
+                           // variable mode , optimistically setting `vrr: next`
+                           // here used to make the switch claim success even when
+                           // the mode never actually changed.
+                           try {
+                             const fresh = await invoke<DisplayInfo[]>("query_displays");
+                             setDisplays(fresh);
+                             const now = fresh.find(d => d.name === selected.name);
+                             if (now) setSelected(now);
+                             if (now && now.vrr !== next) {
+                               setApplyMsg(`VRR did not change for ${selected.name} , the `
+                                 + `compositor still reports it ${now.vrr ? "on" : "off"}. ${msg}`);
+                               return;
+                             }
+                           } catch { /* fall through to the backend's own message */ }
                            setApplyMsg(msg || `VRR ${next ? "enabled" : "disabled"} for ${selected.name}.`);
                          } catch (e: any) {
                            setApplyMsg("VRR toggle failed: " + (e?.message ?? e));
@@ -707,6 +718,10 @@ export function DisplaysView() {
                         {capable
                           ? "Detected on this output. Reduces tearing and stutter for variable frame-rate games."
                           : "Not detected on this output. Toggle anyway to ask the driver / compositor."}
+                        {" "}Switching this re-negotiates the display link, so the
+                        screen goes black and the monitor may report “no signal”
+                        for a second or two before coming back. That is the
+                        modeset, not a crash.
                       </div>
                     </div>
                     <div className={`toggle${selected.vrr ? " on" : ""}`}>

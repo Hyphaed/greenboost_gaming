@@ -105,7 +105,8 @@ class GlobalSettings:
     nis_scale:        float = 1.0   # GREENBOOST_NIS_SCALE (0.5..1.0; 1.0 = sharpen-only)
     reflex_enable:    bool  = False  # GREENBOOST_REFLEX
     fps_cap:          int   = 0      # DXVK_FRAME_RATE (0 = disabled)
-    stream_priority:  bool  = False  # GREENBOOST_STREAM_PRIORITY (CUDA high-prio streams)
+    # Always on; not user-visible. See global_settings.rs for why.
+    stream_priority:  bool  = True   # GREENBOOST_STREAM_PRIORITY (CUDA high-prio streams)
     vk_debug:         bool  = False  # GREENBOOST_VK_DEBUG
     vk_overflow_min_mb: int = 32     # GREENBOOST_VK_OVERFLOW_MIN_MB
     vk_t3_min_mb:     int  = 0      # GREENBOOST_VK_T3_MIN_MB (0 = no minimum)
