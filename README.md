@@ -535,6 +535,18 @@ See [`DLSS_UPDATER.md`](DLSS_UPDATER.md) for the details of the download sources
 
 ---
 
+## 🖥️ Scope, for context ; currently used hardware
+
+This is being built, tested, and used primarily on two machines, 
+with the desktop being used by far the most:
+
+desktop node; RTX 5070 12Gb VRAM, PCIe 4.0 x16, 64GB DDR4, i9 14900KF
+mobile node; RTX mobile 5070 8Gb VRAM, PCIe 5.0 x16, 32GB DDR5, Ryzen AI9 365
+
+** apart from the hardware of contributors and/or people that open issues and/or sharing logs
+
+---
+
 ## License
 
 GreenBoost Gaming Suite is released under the **GNU General Public License v2.0**.
