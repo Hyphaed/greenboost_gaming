@@ -20,6 +20,14 @@ pub struct GlobalSettings {
     #[serde(default)]                    pub perf_mode:          bool,
     #[serde(default)]                    pub hdr:                bool,
     #[serde(default)]                    pub auto_disable_secondary_on_launch: bool,
+    // Launch Steam minimised to tray (`steam -silent`) when it isn't already
+    // running, and start the game with `steam -applaunch` instead of the
+    // steam:// URL, whose desktop activation is what raises Steam over the
+    // game. Steam has no option to hide its tray ICON , that stays.
+    #[serde(default = "default_true")]   pub steam_silent_launch: bool,
+    // Explicit upstream Proton for the wrapper (`proton` script or its
+    // directory). Empty = auto-detect.
+    #[serde(default)]                    pub proton_upstream:    String,
     // GreenBoost runtime feature toggles
     #[serde(default)]                    pub nis_enable:         bool,
     #[serde(default)]                    pub nis_dispatch:       bool,
@@ -65,6 +73,15 @@ pub struct GlobalSettings {
     // keep both structs in sync when adding fields here).
     #[serde(default = "default_true")]               pub gl_layer_enabled:    bool,
     #[serde(default = "default_gl_overflow_min_mb")] pub gl_overflow_min_mb:  i32,
+    /// What the window's close button does , "tray" (default) hides the
+    /// Suite to the system tray and leaves it running, "quit" exits as it
+    /// always did. A window the user cannot get back would be worse than
+    /// either, so this is user-visible, not a hidden default.
+    #[serde(default = "default_close_action")]       pub close_action:        String,
+    /// Whether quitting the Suite also stops the game it launched , the
+    /// behaviour Steam has. Off means a game outlives the Suite, which is
+    /// the pre-0.1.2 behaviour and still a legitimate choice.
+    #[serde(default = "default_true")]               pub stop_game_on_quit:   bool,
     // Auto-detected (read-only on the UI side)
     #[serde(default)]                    pub detected_session:   String,
     #[serde(default)]                    pub detected_gpu:       String,
@@ -83,6 +100,7 @@ fn default_shader_cache_gb() -> i32 { 8 }
 fn default_gplasync_version() -> String { "current".to_string() }
 fn default_gl_overflow_min_mb() -> i32 { 32 }
 fn default_affinity_mode() -> String { "all".to_string() }
+fn default_close_action() -> String { "tray".to_string() }
 
 impl Default for GlobalSettings {
     fn default() -> Self {
@@ -94,6 +112,8 @@ impl Default for GlobalSettings {
             perf_mode:          false,
             hdr:                false,
             auto_disable_secondary_on_launch: false,
+            steam_silent_launch: true,
+            proton_upstream:    String::new(),
             nis_enable:         false,
             nis_dispatch:       false,
             gplasync:           true,
@@ -128,6 +148,8 @@ impl Default for GlobalSettings {
             affinity_mode:      default_affinity_mode(),
             gl_layer_enabled:   true,
             gl_overflow_min_mb: default_gl_overflow_min_mb(),
+            close_action:       default_close_action(),
+            stop_game_on_quit:  true,
             detected_session:   String::new(),
             detected_gpu:       String::new(),
             detected_series:    String::new(),

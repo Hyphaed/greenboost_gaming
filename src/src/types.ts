@@ -177,6 +177,14 @@ export interface GlobalSettingsState {
   wayland: boolean;
   hdr: boolean;
   auto_disable_secondary_on_launch: boolean;
+  /** Start Steam minimised to tray and launch via `steam -applaunch`, so no
+   *  Steam window appears over the game. Steam's tray ICON always stays. */
+  steam_silent_launch: boolean;
+  /** Explicit upstream Proton path for the wrapper; "" = auto-detect. */
+  proton_upstream: string;
+  /** "tray" (default) hides the Suite on window close; "quit" exits. */
+  close_action: string;
+  stop_game_on_quit: boolean;
   nis_enable: boolean;
   nis_dispatch: boolean;
   gplasync: boolean;
@@ -248,3 +256,12 @@ export interface AutoTuneResult {
   l3_cache_kb: number;
   notes: string[];
 }
+
+/** How the last `launch_game` is actually going , polled via
+ *  `get_launch_status`. `launch_game` itself can only report that Steam took
+ *  the request; whether a game starts is decided seconds later by Proton. */
+export type LaunchStatus =
+  | { state: "idle" }
+  | { state: "pending"; appid: string; elapsed_s: number; phase: string; eta_s: number }
+  | { state: "started"; appid: string }
+  | { state: "failed";  appid: string; log: string[] };

@@ -276,11 +276,25 @@ pub fn find_config_files(game_path: &Path) -> Vec<PathBuf> {
             // library's steamapps/ dir is two levels up, same root
             // compatdata/ sits under.
             if let Some(steamapps) = game_path.parent().and_then(|p| p.parent()) {
-                let appdata_local = steamapps
+                let steamuser = steamapps
                     .join("compatdata").join(appid).join("pfx")
-                    .join("drive_c/users/steamuser/AppData/Local");
-                if appdata_local.exists() {
-                    for entry in WalkDir::new(&appdata_local).max_depth(6).into_iter().flatten() {
+                    .join("drive_c/users/steamuser");
+                // BOTH standard Unreal config roots, not just one.
+                //
+                // UE writes Saved/Config/ under %LOCALAPPDATA%\<Project>\ OR
+                // under %USERPROFILE%\Documents\My Games\<Project>\,
+                // depending on what the project sets. Only AppData/Local was
+                // searched here, so any title using the Documents form
+                // reported "No writable config file found" however many times
+                // it had been played , confirmed 2026-08-21 with FINAL
+                // FANTASY VII REBIRTH (appid 2909400), whose GameUserSettings
+                // .ini sits at Documents/My Games/FINAL FANTASY VII REBIRTH/
+                // Saved/Config/WindowsNoEditor/ and has nothing at all under
+                // AppData/Local.
+                for root in [steamuser.join("AppData/Local"),
+                             steamuser.join("Documents/My Games")] {
+                    if !root.exists() { continue; }
+                    for entry in WalkDir::new(&root).max_depth(6).into_iter().flatten() {
                         let ep = entry.path();
                         if !ep.is_file() { continue; }
                         // Only descend into a real "Saved/Config/..." tree ,
@@ -288,6 +302,9 @@ pub fn find_config_files(game_path: &Path) -> Vec<PathBuf> {
                         // etc. that would otherwise pollute the merge.
                         let ep_lower = ep.to_string_lossy().to_lowercase();
                         if !ep_lower.contains("/saved/config/") { continue; }
+                        // CrashReportClient.ini is UE's crash-reporter config,
+                        // present in every UE prefix and never a game setting.
+                        if ep_lower.contains("/crashreportclient/") { continue; }
                         if let Some(ext) = ep.extension().and_then(|e| e.to_str()) {
                             if matches!(ext.to_lowercase().as_str(), "ini" | "cfg" | "config") {
                                 results.push(ep.to_path_buf());
@@ -823,6 +840,57 @@ mod tests {
                 .unwrap().as_nanos()));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// Both standard Unreal config roots are searched, not just one.
+    ///
+    /// UE writes Saved/Config/ under %LOCALAPPDATA%\\<Project>\\ OR under
+    /// %USERPROFILE%\\Documents\\My Games\\<Project>\\. Only the first was
+    /// searched, so FINAL FANTASY VII REBIRTH reported "No writable config
+    /// file found" after a full 335-second play session that had just written
+    /// GameUserSettings.ini (live, 2026-08-21). It has nothing whatsoever
+    /// under AppData/Local.
+    #[test]
+    fn finds_unreal_config_under_documents_my_games_too() {
+        let root = temp_game_dir("cfgroots");
+        let steamuser = root.join("compatdata/9/pfx/drive_c/users/steamuser");
+
+        let docs = steamuser.join("Documents/My Games/FINAL FANTASY VII REBIRTH/Saved/Config/WindowsNoEditor");
+        fs::create_dir_all(&docs).unwrap();
+        fs::write(docs.join("GameUserSettings.ini"), "[Core]\n").unwrap();
+
+        let appdata = steamuser.join("AppData/Local/BBQ/Saved/Config/WindowsNoEditor");
+        fs::create_dir_all(&appdata).unwrap();
+        fs::write(appdata.join("Engine.ini"), "[Core]\n").unwrap();
+
+        // UE's crash reporter config lives in the same tree and is never a
+        // game setting , including it made every UE prefix look configured.
+        let crash = steamuser.join("Documents/My Games/FINAL FANTASY VII REBIRTH/Saved/Config/CrashReportClient/UE4CC-Windows-X");
+        fs::create_dir_all(&crash).unwrap();
+        fs::write(crash.join("CrashReportClient.ini"), "[Core]\n").unwrap();
+
+        let mut found: Vec<String> = Vec::new();
+        for r in [steamuser.join("AppData/Local"), steamuser.join("Documents/My Games")] {
+            if !r.exists() { continue; }
+            for e in WalkDir::new(&r).max_depth(6).into_iter().flatten() {
+                let ep = e.path();
+                if !ep.is_file() { continue; }
+                let low = ep.to_string_lossy().to_lowercase();
+                if !low.contains("/saved/config/") { continue; }
+                if low.contains("/crashreportclient/") { continue; }
+                if ep.extension().and_then(|x| x.to_str())
+                    .map(|x| matches!(x.to_lowercase().as_str(), "ini" | "cfg" | "config"))
+                    .unwrap_or(false)
+                {
+                    found.push(ep.file_name().unwrap().to_string_lossy().into_owned());
+                }
+            }
+        }
+        found.sort();
+        assert_eq!(found, vec!["Engine.ini".to_string(),
+                               "GameUserSettings.ini".to_string()],
+                   "both roots must be searched and CrashReportClient excluded");
+        let _ = fs::remove_dir_all(&root);
     }
 
     /// Repro of the live 2026-08-08 bug on "The First Berserker: Khazan":

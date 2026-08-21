@@ -112,6 +112,32 @@ export function StatusView() {
     command: "install_module_streaming",
   }, "GreenBoost kernel module installed. Reboot may be required.", setModuleMsg);
 
+  // Updates card , actually take the update, rather than describing how to.
+  // Both paths fetch the newer sources and run that project's own installer,
+  // which is what a human would have done by hand.
+  const onUpgrade = (key: string) => {
+    if (key === "core") {
+      openModal({
+        title:   "Upgrade GreenBoost core",
+        command: "upgrade_core_streaming",
+        confirm: "Pull the latest GreenBoost core sources, run its installer, "
+               + "and reload the kernel module so the new build is the one "
+               + "running? This needs administrator authorization and takes a "
+               + "few minutes.",
+      }, "GreenBoost core upgraded.", setModuleMsg);
+    } else {
+      openModal({
+        title:   "Upgrade GreenBoost Gaming Suite",
+        command: "upgrade_suite_streaming",
+        confirm: "Pull the latest Gaming Suite sources and re-run install.sh? "
+               + "This rebuilds the app and can take several minutes. You'll "
+               + "need to close and reopen the app afterwards to run the new "
+               + "version.",
+      }, "Suite upgraded , close and reopen the app to run the new version.",
+         setModuleMsg);
+    }
+  };
+
   const onInstallLayers   = () => openModal({
     title:   "Install GreenBoost Graphics Layers",
     command: "install_layers_streaming",
@@ -171,7 +197,7 @@ export function StatusView() {
     <div className="content-scroll">
       <div style={{ maxWidth: 700, margin: "0 auto" }}>
         {/* Renders nothing unless something is actually out of date. */}
-        <UpdateBanner compact />
+        <UpdateBanner compact onUpgrade={onUpgrade} />
         <p className="section-title">My Gaming Rig</p>
         <div className="section-card">
           {status?.cpu_name && (

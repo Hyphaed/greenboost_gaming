@@ -15,6 +15,14 @@
 #
 # Install to: /etc/udev/rules.d/99-greenboost-gaming.rules
 
+# The TEST guard is required: /etc/udev/rules.d is copied into the dracut
+# initramfs, where udev evaluates this rule but coreutils does not exist. Without
+# it, every boot logs two errors at ~1.9s ("greenboost: Failed to find and pin
+# callout binary /bin/chgrp: No such file or directory"). The real-root
+# systemd-tmpfiles pass applies the ownership anyway, so skipping in the
+# initramfs costs nothing. Paths are /usr/bin, not /bin: udev pins the callout
+# binary by real path.
 SUBSYSTEM=="module", KERNEL=="greenboost", ACTION=="add", \
-    RUN+="/bin/chgrp greenboost /sys/module/greenboost/parameters/gaming_mode", \
-    RUN+="/bin/chmod 0664 /sys/module/greenboost/parameters/gaming_mode"
+    TEST=="/usr/bin/chgrp", \
+    RUN+="/usr/bin/chgrp greenboost /sys/module/greenboost/parameters/gaming_mode", \
+    RUN+="/usr/bin/chmod 0664 /sys/module/greenboost/parameters/gaming_mode"

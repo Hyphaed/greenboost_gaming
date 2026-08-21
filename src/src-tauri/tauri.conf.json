@@ -52,7 +52,8 @@
     ],
     "linux": {
       "deb": {
-        "desktopTemplate": "greenboost-gaming.desktop.hbs"
+        "desktopTemplate": "greenboost-gaming.desktop.hbs",
+        "depends": ["libayatana-appindicator3-1"]
       }
     }
   }

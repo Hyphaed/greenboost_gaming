@@ -1,0 +1,269 @@
+#!/usr/bin/env python3
+# Copyright 2026 Ferran Duarri , GPL v2
+"""gb-recover-launch , diagnose and clear a stuck GreenBoost game launch.
+
+Written from the 2026-08-21 incident, which had three distinct faults stacked
+on one screen that said only "Launching":
+
+  1. Two GreenBoost Proton compat tools started the SAME appid two seconds
+     apart (greenboost-proton-experimental at 02:57:48, greenboost-proton at
+     02:57:50), each delegating to a different upstream Proton, both into one
+     wine prefix. One prefix cannot be brought up twice.
+  2. When that was killed, the wine session was ORPHANED rather than reaped:
+     wineserver idle in epoll, explorer.exe parked on a futex, wineboot.exe a
+     zombie, a stale pfx.lock, and no game binary anywhere , for 13 minutes,
+     with the GPU at 0%.
+  3. Steam kept showing "Launching" the whole time, because the app's process
+     tree never fully exited, so Steam's reaper never saw it stop.
+
+None of that is visible from Steam's UI. This script names it and clears it.
+
+Exit codes:  0 nothing wrong / cleaned successfully   1 needs a human
+Use --json for machine output (this is what the Suite reads).
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+# Proton's own furniture. Every one starts for ANY launch, successful or not,
+# so the presence of these says nothing about whether a game is running , and
+# reading them as "the game is up" is the misdiagnosis this script exists to
+# prevent.
+WINE_INFRA = {
+    "explorer.exe", "services.exe", "winedevice.exe", "plugplay.exe",
+    "rpcss.exe", "svchost.exe", "conhost.exe", "tabtip.exe", "wineboot.exe",
+    "start.exe", "steam.exe", "wineserver", "wine64-preloader",
+    "wine-preloader", "winemenubuilder.exe", "wineconsole.exe", "cmd.exe",
+}
+
+STEAM_ROOTS = [
+    "~/.local/share/Steam", "~/.steam/steam", "~/.steam/root",
+    "~/.var/app/com.valvesoftware.Steam/data/Steam",
+]
+
+
+def steam_root() -> "Path | None":
+    for r in STEAM_ROOTS:
+        p = Path(os.path.expanduser(r))
+        if p.is_dir():
+            return p
+    return None
+
+
+def procs() -> "list[tuple[int, str, str]]":
+    """(pid, comm, cmdline) for every readable process."""
+    out = []
+    for pd in Path("/proc").iterdir():
+        if not pd.name.isdigit():
+            continue
+        try:
+            comm = (pd / "comm").read_text().strip()
+            cmd = (pd / "cmdline").read_bytes().replace(b"\0", b" ").decode(
+                "utf-8", "replace").strip()
+        except OSError:
+            continue
+        out.append((int(pd.name), comm, cmd))
+    return out
+
+
+def in_wine_prefix(pid: int) -> "str | None":
+    """The WINEPREFIX this process belongs to, or None if it is not wine's.
+
+    `comm.endswith(".exe")` is NOT sufficient on its own and the difference is
+    not academic , it matched an unrelated host binary called `claude.exe`
+    during testing on 2026-08-21 and reported it as a running game. The
+    environment is definitive: only processes wine started carry WINEPREFIX /
+    STEAM_COMPAT_DATA_PATH.
+    """
+    try:
+        env = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+    except OSError:
+        return None                      # not ours to read , not ours to judge
+    for e in env:
+        for key in (b"WINEPREFIX=", b"STEAM_COMPAT_DATA_PATH="):
+            if e.startswith(key):
+                return e[len(key):].decode("utf-8", "replace")
+    return None
+
+
+def wine_session(appid: "str | None"):
+    """Wine processes, split into real game binaries and Proton's furniture.
+
+    Scoped to an actual wine prefix, and to THIS appid's prefix when one is
+    given , otherwise a second game running in another prefix reads as this
+    launch having succeeded.
+    """
+    game, infra = [], []
+    for pid, comm, _cmd in procs():
+        if not (comm in WINE_INFRA or comm.endswith(".exe") or "wineserver" in comm):
+            continue
+        prefix = in_wine_prefix(pid)
+        if prefix is None:
+            continue
+        if appid and f"compatdata/{appid}" not in prefix:
+            continue
+        (infra if comm in WINE_INFRA else game).append((pid, comm))
+    return game, infra
+
+
+def launch_runs(root: Path, window_s: int = 900):
+    """(epoch, tool) for GreenBoost Proton wrapper starts inside the window."""
+    log = root / "logs/console-linux.txt"
+    if not log.is_file():
+        return []
+    ts_re = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]")
+    tool_re = re.compile(r"compatibilitytools\.d/(greenboost-proton[a-z-]*)")
+    cutoff = time.time() - window_s
+    runs = []
+    try:
+        lines = log.read_text(errors="replace").splitlines()[-6000:]
+    except OSError:
+        return []
+    for ln in lines:
+        if "[greenboost-proton] Delegating to:" in ln:
+            m = ts_re.match(ln)
+            if not m:
+                continue
+            try:
+                t = time.mktime(time.strptime(m.group(1), "%Y-%m-%d %H:%M:%S"))
+            except ValueError:
+                continue
+            runs.append([t, None])
+        else:
+            m = tool_re.search(ln)
+            if m and runs and runs[-1][1] is None:
+                runs[-1][1] = m.group(1)
+    return [(t, tool or "unknown") for t, tool in runs if t >= cutoff]
+
+
+def kill_tree(pids, grace=4.0):
+    for p in pids:
+        try:
+            os.kill(p, signal.SIGTERM)
+        except OSError:
+            pass
+    deadline = time.time() + grace
+    while time.time() < deadline:
+        if not any(Path(f"/proc/{p}").exists() for p in pids):
+            return
+        time.sleep(0.2)
+    for p in pids:
+        try:
+            os.kill(p, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--appid", help="restrict prefix work to this appid")
+    ap.add_argument("--apply", action="store_true",
+                    help="actually clear what is found (default: report only)")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+
+    root = steam_root()
+    report = {"ok": True, "findings": [], "actions": [], "needs_human": []}
+
+    if root is None:
+        report.update(ok=False, needs_human=["No Steam installation found."])
+        print(json.dumps(report) if a.json else report["needs_human"][0])
+        return 1
+
+    # ── 1. duplicate compat tools racing one appid ────────────────────────
+    runs = launch_runs(root)
+    tools = sorted({t for _, t in runs})
+    if len(tools) > 1:
+        report["ok"] = False
+        report["findings"].append({
+            "id": "proton_tool_race",
+            "detail": f"{len(runs)} wrapper starts in the last 15 min from "
+                      f"{len(tools)} different tools: {', '.join(tools)}. Two "
+                      f"tools cannot bring up one wine prefix.",
+        })
+        report["needs_human"].append(
+            "Pick ONE GreenBoost Proton per game in Steam > Properties > "
+            "Compatibility, then restart Steam , it holds config.vdf in memory "
+            "and will not re-read a mapping written while it is running.")
+    elif len(runs) >= 3:
+        report["ok"] = False
+        report["findings"].append({
+            "id": "launch_retry_loop",
+            "detail": f"{len(runs)} wrapper starts in the last 15 min from one "
+                      f"tool , the launch is looping, not loading.",
+        })
+
+    # ── 2. orphaned wine session ──────────────────────────────────────────
+    game, infra = wine_session(a.appid)
+    if infra and not game:
+        report["ok"] = False
+        report["findings"].append({
+            "id": "orphaned_wine_session",
+            "detail": f"{len(infra)} Proton process(es) alive with no game "
+                      f"binary among them: "
+                      f"{', '.join(sorted({c for _, c in infra}))}. Proton came "
+                      f"up; the game never did. Steam will keep showing "
+                      f"'Launching' until this tree exits.",
+        })
+        if a.apply:
+            kill_tree([p for p, _ in infra])
+            still = [c for p, c in wine_session(a.appid)[1]
+                     if Path(f"/proc/{p}").exists()]
+            report["actions"].append(
+                "cleared the orphaned wine session"
+                + ("" if not still else f" (survivors: {sorted(set(still))})"))
+    elif game:
+        report["findings"].append({
+            "id": "game_running",
+            "detail": "A game process is running: "
+                      + ", ".join(sorted({c for _, c in game})),
+        })
+
+    # ── 3. stale prefix lock ──────────────────────────────────────────────
+    if a.appid:
+        lock = root / "steamapps/compatdata" / a.appid / "pfx.lock"
+        if lock.exists() and not game and not infra:
+            report["ok"] = False
+            report["findings"].append({
+                "id": "stale_prefix_lock",
+                "detail": f"{lock} exists with nothing holding the prefix , a "
+                          f"leftover from a session that was killed rather "
+                          f"than closed. It can block the next launch.",
+            })
+            if a.apply:
+                try:
+                    lock.unlink()
+                    report["actions"].append(f"removed stale {lock.name}")
+                except OSError as e:
+                    report["needs_human"].append(f"could not remove {lock}: {e}")
+
+    if a.json:
+        print(json.dumps(report, indent=1))
+        return 0 if report["ok"] or report["actions"] else 1
+
+    if not report["findings"]:
+        print("Nothing wrong with the launch path , no orphaned session, no "
+              "tool race, no stale lock.")
+        return 0
+    for f in report["findings"]:
+        print(f"[{f['id']}] {f['detail']}\n")
+    for act in report["actions"]:
+        print(f"  fixed: {act}")
+    for h in report["needs_human"]:
+        print(f"  needs you: {h}")
+    if not a.apply and not report["ok"]:
+        print("\nReport only. Re-run with --apply to clear what can be cleared.")
+    return 0 if report["ok"] or report["actions"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

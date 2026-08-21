@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, Children } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { Game, SettingGroup, DlssSourceState, InstallStreamProps, GameOverrides, GameNisConfig, GameWrappers, DlssStatus, GlobalSettingsState, DirectStorageInfo, AutoTuneResult } from "../types";
+import type { Game, SettingGroup, DlssSourceState, InstallStreamProps, GameOverrides, GameNisConfig, GameWrappers, DlssStatus, GlobalSettingsState, DirectStorageInfo, AutoTuneResult, LaunchStatus } from "../types";
 import { Icon } from "../icons";
 import { GameThumb } from "../components/GameThumb";
 import { GameHeroBanner } from "../components/GameHeroBanner";
@@ -338,6 +338,14 @@ function GlobalSettingsPanel() {
     invoke<DlssPresetChoice[]>("list_dlss_preset_choices")
       .then(setPresets).catch(console.error);
   }, [reload, reloadGsProfiles]);
+
+  // Populated once , the answer only changes when the user installs a Proton.
+  const [protonInstalls, setProtonInstalls] = useState<[string, string][]>([]);
+  useEffect(() => {
+    invoke<[string, string][]>("list_proton_installs")
+      .then(setProtonInstalls)
+      .catch(() => setProtonInstalls([]));
+  }, []);
 
   const update = useCallback(async (patch: Partial<GlobalSettingsState>) => {
     try {
@@ -992,6 +1000,51 @@ function GlobalSettingsPanel() {
              toggle(state.wayland, () => update({ wayland: !state.wayland })),
              GS_BENEFIT["Wayland"], undefined, GS_INFO["Wayland"])}
 
+        {row("Close to system tray",
+             "Closing the window keeps the Suite running in the tray instead "
+           + "of quitting, so it can still stop the game for you. Turn this "
+           + "off to make the close button exit the Suite.",
+             toggle(state.close_action !== "quit",
+                    () => update({
+                      close_action: state.close_action === "quit" ? "tray" : "quit"
+                    })),
+             GS_BENEFIT["Close to system tray"], undefined, GS_INFO["Close to system tray"])}
+
+        {row("Stop the game when you quit",
+             "When you quit the Suite, the game it launched is closed too , "
+           + "the same thing Steam does. The game is asked to exit first and "
+           + "only forced if it refuses.",
+             toggle(state.stop_game_on_quit,
+                    () => update({ stop_game_on_quit: !state.stop_game_on_quit })),
+             GS_BENEFIT["Stop the game when you quit"], undefined, GS_INFO["Stop the game when you quit"])}
+
+        {row("Upstream Proton",
+             "Which Proton GreenBoost builds on top of. GreenBoost is a "
+           + "wrapper, not a Proton of its own , it always needs a real one "
+           + "underneath. \"Automatic\" picks Proton Experimental, or the "
+           + "newest one you have if that isn't installed.",
+             <select
+               className="gs-select"
+               value={state.proton_upstream}
+               onChange={e => update({ proton_upstream: e.target.value })}
+             >
+               <option value="">Automatic</option>
+               {protonInstalls.map(([name, path]) => (
+                 <option key={path} value={path}>{name}</option>
+               ))}
+             </select>,
+             GS_BENEFIT["Upstream Proton"], undefined, GS_INFO["Upstream Proton"])}
+
+        {row("Keep Steam out of the way",
+             "Starts Steam straight into the system tray when it isn't "
+           + "already running, and launches your game without bringing the "
+           + "Steam window to the front. Steam's tray icon always stays , "
+           + "there's no setting anywhere that removes it.",
+             toggle(state.steam_silent_launch,
+                    () => update({ steam_silent_launch: !state.steam_silent_launch })),
+             GS_BENEFIT["Keep Steam out of the way"], undefined,
+             GS_INFO["Keep Steam out of the way"])}
+
         {row("Cinema mode on launch",
              "Turns off every monitor except your main one the moment you "
            + "click Launch, so games don't get confused by extra screens. "
@@ -1557,11 +1610,64 @@ export function GamesView() {
   const [dlssMenuOpen, setDlssMenuOpen] = useState(false);
 
   const [launching, setLaunching] = useState(false);
+
+  /** Watch a launch until a game process appears, or until it's clear none will.
+   *
+   *  `launch_game` returning Ok only means Steam accepted the request. The
+   *  view used to print that as success and stop looking, so a wrapper that
+   *  died in the first second (2026-08-20: the Proton wrapper could not even
+   *  be parsed by Steam's runtime Python) read as "the game just didn't
+   *  open". The backend already knew; nobody asked it. */
+  const watchLaunch = async (appid: string) => {
+    // 100 polls x 2 s = 200 s, comfortably past the backend's 180 s budget.
+    // At 32 the view stopped watching after 64 s and simply went quiet, so a
+    // launch that was still legitimately working looked abandoned.
+    for (let i = 0; i < 100; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      let st: LaunchStatus;
+      try {
+        st = await invoke<LaunchStatus>("get_launch_status");
+      } catch {
+        return;                         // backend gone; leave the last message
+      }
+      if (st.state === "started" && st.appid === appid) {
+        setMsg("Running.");
+        return;
+      }
+      if (st.state === "failed" && st.appid === appid) {
+        const log = st.log.length
+          ? "\n\nWhat the Proton wrapper said:\n" + st.log.join("\n")
+          : "\n\nThe Proton wrapper wrote no log at all, which usually means " +
+            "Steam never reached it , check the game's compatibility tool is " +
+            "set to GreenBoost Proton.";
+        setMsg(
+          "No game process ever started. Steam accepted the launch, but nothing " +
+          "came up in 60 seconds.\n\nNothing is broken and no settings changed " +
+          ", you can launch again, or pick a different Proton under Global " +
+          "Settings \u2192 Upstream Proton." + log);
+        return;
+      }
+      if (st.state === "pending" && st.appid === appid) {
+        // Say WHAT is happening, not just that time is passing. A counter on
+        // its own is indistinguishable from a hang, which is precisely how
+        // this looked on 2026-08-21.
+        const mins = Math.floor(st.eta_s / 60), secs = st.eta_s % 60;
+        const left = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+        setMsg(
+          `Starting\u2026 ${st.phase}.\n` +
+          `${st.elapsed_s}s elapsed , still normal for up to another ${left}. ` +
+          `First runs are the slow ones: the wine prefix is built and shader ` +
+          `pipelines are compiled once, then cached.`);
+      }
+    }
+  };
+
   const handleLaunch = async () => {
     if (!selected?.appid) {
       setMsg("This entry has no Steam appid , can't launch.");
       return;
     }
+    const appid = selected.appid;
     setLaunching(true);
     setMsg(null);
     try {
@@ -1570,10 +1676,11 @@ export function GamesView() {
       // other private copies of GlobalSettings and could not trust either.
       const cinema = !!globalSettings.get()?.auto_disable_secondary_on_launch;
       const out: string = await invoke("launch_game", {
-        appid: selected.appid,
+        appid,
         disableSecondaryDisplays: cinema,
       });
       setMsg(out);
+      void watchLaunch(appid);   // resolves the message to running / failed
     } catch (e: any) {
       setMsg("Launch failed: " + (e?.message ?? e));
     }

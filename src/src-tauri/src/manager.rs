@@ -2982,20 +2982,82 @@ pub fn launch_game_ext(appid: &str, disable_secondary_displays: bool)
         }
     }
 
-    // Prefer xdg-open (most-portable) → fall back to steam → fall back
-    // to gtk-launch.  Run detached so the Suite stays responsive while
-    // the game launches.
-    for argv in [
-        vec!["xdg-open", &url],
+    // Get Steam up before we ask it for anything. If it isn't running, the
+    // steam:// handler starts it with its window open and focused, which then
+    // sits on top of the launching game.  `-silent` boots it straight to the
+    // tray instead, so no Steam window ever appears.
+    let silent = crate::global_settings::get_impl()
+        .map(|s| s.steam_silent_launch)
+        .unwrap_or(true);
+    let steam_was_up = steam_is_running();
+    if silent && !steam_was_up {
+        match Command::new("steam").arg("-silent").spawn() {
+            Ok(_) => {
+                prep_notes.push("started Steam minimised to tray".to_string());
+                // Steam needs to be far enough up to accept -applaunch.
+                for _ in 0..40 {
+                    if steam_is_running() { break; }
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+            }
+            Err(e) => prep_notes.push(format!("warn: could not start Steam: {e}")),
+        }
+    }
+
+    // `steam -applaunch` over `xdg-open steam://rungameid/...`: both honour
+    // the per-game compat tool and launch options, but the URL goes through
+    // the desktop's handler, whose activation is what raises the Steam window
+    // to the front.  -applaunch passes the request over Steam's own IPC and
+    // leaves the window alone.  The URL stays as the fallback for setups
+    // where the `steam` binary isn't on PATH (Flatpak, mostly).
+    let id_s = id.to_string();
+    let attempts: [Vec<&str>; 3] = [
+        vec!["steam",    "-applaunch", &id_s],
         vec!["steam",    &url],
-    ] {
-        if let Ok(status) = Command::new(argv[0]).arg(argv[1]).status() {
-            if status.success() {
-                spawn_gaming_mode_watcher();
-                let mut msg = format!(
-                    "Launching appid {id} via {argv0} , GreenBoost Proton mapping \
-                     verified.",
-                    argv0 = argv[0]);
+        vec!["xdg-open", &url],
+    ];
+    // SPAWN, never `.status()`.
+    //
+    // 2026-08-21: this loop used `.status()`, which waits for the child to
+    // exit. `steam -applaunch` only returns promptly when a Steam client is
+    // ALREADY up and it can hand the request over IPC; when it ends up being
+    // the client itself, it does not exit until Steam quits. The Suite sat
+    // inside that call for as long as Steam ran , measured 419 s and counting
+    // on the reported hang , which froze the UI thread (the desktop offered
+    // "Force Quit"), never reached note_launch_pending() below, and never
+    // started the watcher. So the Games view showed no progress at all: not a
+    // slow launch, a deadlocked one. Everything downstream , the Pending
+    // states, the elapsed counter, the failure log tail , was already built
+    // and correct, and all of it was unreachable behind this one call.
+    //
+    // What we actually need to know is only whether the command COULD be
+    // started, plus a brief look for an immediate non-zero exit so the next
+    // fallback gets a turn. Anything longer-lived is a success by definition.
+    for argv in attempts {
+        let Ok(mut child) = Command::new(argv[0]).args(&argv[1..]).spawn() else {
+            continue;                       // binary not on PATH , try the next
+        };
+        let mut accepted = true;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
+        while std::time::Instant::now() < deadline {
+            match child.try_wait() {
+                Ok(Some(st)) => { accepted = st.success(); break; }
+                Ok(None)     => std::thread::sleep(std::time::Duration::from_millis(100)),
+                Err(_)       => break,
+            }
+        }
+        {
+            if accepted {
+                // Only worth doing when Steam already had a window open. If we
+                // just started it with -silent there is nothing on screen to
+                // move, and reporting otherwise is noise on every launch.
+                if silent && steam_was_up {
+                    if let Some(note) = hide_steam_window() { prep_notes.push(note); }
+                }
+                crate::game_lifecycle::note_launch_pending(&id_s);
+                spawn_gaming_mode_watcher(id_s.clone());
+                let mut msg = format!("Starting appid {id} via {argv0} …",
+                                      argv0 = argv[0]);
                 if !prep_notes.is_empty() {
                     msg.push_str("\nPre-launch: ");
                     msg.push_str(&prep_notes.join("; "));
@@ -3004,7 +3066,101 @@ pub fn launch_game_ext(appid: &str, disable_secondary_displays: bool)
             }
         }
     }
-    Err("Neither xdg-open nor steam is on PATH , install one to launch games.".to_string())
+    Err("Neither steam nor xdg-open is on PATH , install one to launch games.".to_string())
+}
+
+/// Every upstream Proton the wrapper could be pointed at.
+///
+/// Exists because the wrapper's auto-detection only ever looked for Valve's
+/// own builds by name, so a user whose only Proton was a distro build
+/// (Proton-CachyOS, reported 2026-08-20) had to edit the wrapper by hand to
+/// launch anything. Offering the list is what makes that a setting instead of
+/// a patch. GreenBoost's own compat tools are excluded , delegating to
+/// ourselves would just recurse.
+pub fn list_proton_installs() -> Vec<(String, String)> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let mut out: Vec<(String, String)> = Vec::new();
+    for root in [
+        format!("{home}/.local/share/Steam"),
+        format!("{home}/.steam/steam"),
+        format!("{home}/.steam/root"),
+        format!("{home}/.var/app/com.valvesoftware.Steam/data/Steam"),
+    ] {
+        for sub in ["steamapps/common", "compatibilitytools.d"] {
+            let Ok(entries) = std::fs::read_dir(format!("{root}/{sub}")) else { continue };
+            for e in entries.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.to_lowercase().contains("greenboost") { continue; }
+                let script = e.path().join("proton");
+                if !script.is_file() { continue; }
+                let path = script.to_string_lossy().to_string();
+                if !out.iter().any(|(_, p)| *p == path) { out.push((name, path)); }
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Is the Steam client up? Same /proc walk as `live_stats::find_game_pid_impl`.
+fn steam_is_running() -> bool {
+    let Ok(entries) = std::fs::read_dir("/proc") else { return false };
+    for entry in entries.flatten() {
+        let fname = entry.file_name();
+        let name = fname.to_string_lossy();
+        if name.parse::<u32>().is_err() { continue; }
+        if let Ok(comm) = std::fs::read_to_string(entry.path().join("comm")) {
+            if comm.trim() == "steam" { return true; }
+        }
+    }
+    false
+}
+
+/// Push the Steam window out of the way after a launch. Best-effort by
+/// definition, and honest about it.
+///
+/// There is no portable way to do this. On X11 any window manager will take
+/// the request from wmctrl/xdotool. On Wayland it is entirely up to the
+/// compositor: KWin exposes scripting over D-Bus (so KDE works), and Mutter
+/// deliberately exposes nothing at all, so on GNOME Wayland no application
+/// can touch another application's window , not this one, not any other.
+///
+/// Returns a note for the user when there is something worth saying, so the
+/// UI never implies it did something it could not do. Note that hiding the
+/// WINDOW is all that is on offer either way: Steam has no option to suppress
+/// its tray icon, so that stays on every platform.
+fn hide_steam_window() -> Option<String> {
+    let session = crate::global_settings::detect_session_type();
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().to_lowercase();
+
+    // X11 , works on every desktop, so try it first whenever it applies.
+    if session == "x11" {
+        for argv in [
+            vec!["wmctrl", "-r", "Steam", "-b", "add,hidden"],
+            vec!["xdotool", "search", "--class", "steam", "windowminimize"],
+        ] {
+            if let Ok(st) = Command::new(argv[0]).args(&argv[1..]).status() {
+                if st.success() { return None; }
+            }
+        }
+        return Some("could not minimise Steam (install wmctrl or xdotool)".to_string());
+    }
+
+    if desktop.contains("kde") || desktop.contains("plasma") {
+        if let Ok(st) = Command::new("kdotool")
+            .args(["search", "--class", "steam", "windowminimize"]).status()
+        {
+            if st.success() { return None; }
+        }
+        return Some("could not minimise Steam on KWin (install kdotool)".to_string());
+    }
+
+    if session == "wayland" {
+        return Some(
+            "Steam started in the tray; on Wayland outside KDE nothing can \
+             minimise an already-open Steam window".to_string());
+    }
+    None
 }
 
 /// Keep greenboost.ko's `gaming_mode` correct for the lifetime of a launch,
@@ -3022,16 +3178,36 @@ pub fn launch_game_ext(appid: &str, disable_secondary_displays: bool)
 /// but nothing ever called find_game_pid_impl() to notice. This spawns a
 /// short-lived poll of its own, scoped to one launch, so the signal no
 /// longer depends on which tab is on screen.
-fn spawn_gaming_mode_watcher() {
-    std::thread::spawn(|| {
+///
+/// It also owns the launch's visible outcome. It already knew, before anyone
+/// else could, whether a game process ever appeared , it just used to keep
+/// that to itself and `return` on failure, which is why a launch that died in
+/// the first second still read as a success in the Games view.
+fn spawn_gaming_mode_watcher(appid: String) {
+    std::thread::spawn(move || {
         // Steam/Proton/wine startup is slow , give the process time to
         // actually appear before giving up on ever seeing it.
         let mut seen = false;
-        for _ in 0..30 { // ~60s
+        // 180 s, not 60. A first run on a big Unreal title spends minutes in
+        // prefix upgrade and pipeline-library work before any wine process is
+        // findable; calling that "failed" at 60 s reported a working launch as
+        // broken. LAUNCH_BUDGET_S is the single source of truth so the ETA the
+        // user sees and the deadline we enforce cannot drift apart.
+        let budget = crate::game_lifecycle::LAUNCH_BUDGET_S;
+        let steps = budget / 2;
+        for i in 0..steps {
             if crate::live_stats::find_game_pid_impl().is_some() { seen = true; break; }
+            crate::game_lifecycle::note_launch_progress(&appid, i * 2, budget);
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
-        if !seen { return; } // launch failed or isn't a wine/Proton game , nothing to track
+        if !seen {
+            // Not necessarily broken , a native (non-Proton) game has no
+            // wine preloader to find. But it is the only moment we can tell
+            // the user anything, and the wrapper log distinguishes the two.
+            crate::game_lifecycle::note_launch_failed(&appid);
+            return;
+        }
+        crate::game_lifecycle::note_launch_started(&appid);
         loop {
             std::thread::sleep(std::time::Duration::from_secs(3));
             if crate::live_stats::find_game_pid_impl().is_none() { break; }
@@ -3571,7 +3747,7 @@ pub fn install_greenboost_module_streaming(channel: Channel<String>)
         .map(|name| format!("{target}/{name}"))
         .find(|p| std::path::Path::new(p).exists());
 
-    match script_path {
+    let install_rc = match script_path {
         Some(script) => {
             let _ = channel.send(
                 format!("── Running {} (requesting authorization) …",
@@ -3597,7 +3773,119 @@ pub fn install_greenboost_module_streaming(channel: Channel<String>)
             };
             run_script_streaming(&argv, &channel)
         }
+    }?;
+
+    // A failed install must NOT fall through to the reload: reloading would
+    // put the OLD module back and return success, reporting an upgrade that
+    // did not happen. Stop here and surface the installer's own exit code.
+    if install_rc != 0 {
+        let _ = channel.send(format!(
+            "  The installer exited {install_rc}, so nothing was replaced and the \
+             module you have now is still the one running. Scroll up for the \
+             first error it printed , that is the one to fix."));
+        return Ok(install_rc);
     }
+
+    // ── Step 3: reload the kernel module ───────────────────────────
+    // Installing does NOT swap the running module , the old one stays
+    // resident until something reloads it, so `greenboost --version` and
+    // the Status view both keep reporting the OLD version and every fix in
+    // the new build is silently absent from the running system. The core
+    // repo's own notes call this out: "A fresh GreenBoost reinstall does not
+    // reload the kernel module automatically."
+    //
+    // A failure here is not a failed upgrade , the new module IS on disk and
+    // a reboot will pick it up. Say that plainly instead of returning a
+    // non-zero exit that reads as "the upgrade broke".
+    let _ = channel.send("── Reloading the kernel module so the new build is the one running …".into());
+    let reload: Vec<&str> = if which::which("pkexec").is_ok() {
+        vec!["pkexec", "greenboost", "load"]
+    } else {
+        vec!["sudo", "greenboost", "load"]
+    };
+    match run_script_streaming(&reload, &channel) {
+        Ok(0) => {
+            let _ = channel.send("  ✓ new module loaded , the running kernel module is now the one you just installed.".into());
+        }
+        Ok(rc) => {
+            let _ = channel.send(format!(
+                "  NOTE: the reload exited {rc}. The new module is installed on disk;                  the previous one is still the one running until you reboot or run                  `sudo greenboost load` by hand. Nothing is broken , the old module                  keeps working in the meantime."));
+        }
+        Err(e) => {
+            let _ = channel.send(format!(
+                "  NOTE: could not run the reload ({e}). The new module is installed                  on disk; reboot, or run `sudo greenboost load`, to start using it."));
+        }
+    }
+
+    Ok(0)
+}
+
+/// Upgrade the Gaming Suite itself: pull its own repo, then re-run its
+/// installer.
+///
+/// Modelled on `install_greenboost_module_streaming` above, and deliberately
+/// running the SAME `install.sh` a human would: that script is what also
+/// redeploys the Steam compatibility-tool copy, refreshes the $HOME mirror
+/// the Steam sandbox reads, and reinstalls the polkit/sudoers/udev rules. A
+/// shortcut that only rebuilt the binary would reproduce exactly the
+/// stale-deployed-copy class of bug this repo has already been bitten by.
+///
+/// The new binary lands under the running process's own path. Replacing a
+/// running executable is safe on Linux (the running image keeps its inode),
+/// but this process keeps executing the OLD code until it restarts , so the
+/// UI must tell the user to restart rather than implying the upgrade is live.
+pub fn upgrade_suite_streaming(channel: Channel<String>) -> Result<i32, String> {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+    // Env override first, so a checkout somewhere else still upgrades.
+    let target = std::env::var("GB_GAMING_SRC")
+        .unwrap_or_else(|_| format!("{home}/Dev/greenboost_all/greenboost_gaming"));
+    let target_path = std::path::Path::new(&target);
+
+    let _ = channel.send("── Fetching GreenBoost Gaming Suite sources from GitLab …".into());
+    if target_path.join(".git").exists() {
+        let _ = channel.send(format!("  → Found existing repo at {target}, pulling latest …"));
+        let rc = run_script_streaming(&["git", "-C", &target, "pull", "--rebase"], &channel)?;
+        if rc != 0 {
+            // A dirty checkout is the common cause, and blowing past it would
+            // build whatever the user had half-edited. Stop instead.
+            let _ = channel.send(
+                "  The pull did not succeed, so the sources were left untouched and                  nothing was installed. Your current version keeps working. Most                  often this is local edits or an in-progress rebase in that                  checkout , resolve it there, then run this again.".into());
+            return Ok(rc);
+        }
+    } else {
+        std::fs::create_dir_all(format!("{home}/Dev/greenboost_all"))
+            .map_err(|e| format!("Could not create parent dir: {e}"))?;
+        let _ = channel.send(format!("  → Cloning into {target} …"));
+        let rc = run_script_streaming(
+            &["git", "clone",
+              "https://gitlab.com/IsolatedOctopi/greenboost_gaming_suite.git",
+              &target],
+            &channel,
+        )?;
+        if rc != 0 {
+            return Ok(rc);
+        }
+    }
+
+    let script = format!("{target}/install.sh");
+    if !std::path::Path::new(&script).exists() {
+        return Err(format!(
+            "No install.sh at {script} , the sources were fetched but there is              nothing to run. Your current version is untouched."));
+    }
+
+    let _ = channel.send("── Running install.sh (requesting authorization) …".into());
+    let _ = channel.send("   This rebuilds the app and can take several minutes.".into());
+    let argv: Vec<&str> = if which::which("pkexec").is_ok() {
+        vec!["pkexec", "bash", &script]
+    } else {
+        vec!["sudo", "bash", &script]
+    };
+    let rc = run_script_streaming(&argv, &channel)?;
+    if rc == 0 {
+        let _ = channel.send(
+            "  ✓ upgrade installed. Close and reopen GreenBoost Gaming Suite to              start running the new version , this window is still the old one.".into());
+    }
+    Ok(rc)
 }
 
 #[cfg(test)]

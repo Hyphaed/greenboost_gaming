@@ -9,6 +9,9 @@
         "description": "GreenBoost gaming layer , virtual VRAM inflation, T2/T3 DDR overflow via DMA-BUF, NIS sharpen/upscale, persistent VkPipelineCache, HDR WSI, Reflex latency cut, frame-pacing telemetry",
         "enable_environment": {
             "GREENBOOST_VULKAN": "1"
+        },
+        "disable_environment": {
+            "GREENBOOST_VULKAN_DISABLE": "1"
         }
     }
 }

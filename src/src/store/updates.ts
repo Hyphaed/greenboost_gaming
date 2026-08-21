@@ -21,6 +21,12 @@ export interface ComponentUpdate {
   released_at: string | null;
   error: string | null;
   not_installed: boolean;
+  /** Core only: version of the kernel module currently RUNNING. Null when
+   *  the module isn't loaded, and always null for the Suite. */
+  loaded: string | null;
+  /** New core is on disk but the old module is still running , a reload,
+   *  not an upgrade. Never offer "Upgrade now" for this. */
+  reload_needed: boolean;
 }
 
 export interface UpdateReport {
@@ -69,4 +75,17 @@ export function useUpdateChecking(): boolean {
 /** True when either component has a newer release , drives the sidebar dot. */
 export function hasAnyUpdate(r: UpdateReport | null): boolean {
   return !!r && (r.suite.update_available || r.core.update_available);
+}
+
+/** True when core is installed but the running module is a different build.
+ *  Kept separate from `hasAnyUpdate` on purpose: nothing needs downloading,
+ *  so it must not read as "you are out of date". */
+export function hasReloadPending(r: UpdateReport | null): boolean {
+  return !!r && r.core.reload_needed && !r.core.update_available;
+}
+
+/** Anything the Updates card has to say. Drives whether the compact Status
+ *  banner renders at all. */
+export function needsAttention(r: UpdateReport | null): boolean {
+  return hasAnyUpdate(r) || hasReloadPending(r);
 }

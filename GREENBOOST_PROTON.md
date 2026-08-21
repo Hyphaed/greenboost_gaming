@@ -19,6 +19,33 @@ Because it wraps Proton Experimental rather than bundling its own Wine stack, **
 
 Nothing is hard-coded. The same script works on any hardware.
 
+### 1b. Owns the game's process tree
+
+Before anything is spawned, the wrapper calls
+`prctl(PR_SET_CHILD_SUBREAPER, 1)`. Any descendant that gets orphaned , a
+launcher that forks the real game and exits, which is exactly what
+Battle.net, Epic and EA launchers do , re-parents to the wrapper instead of
+to init. Without that, the wrapper would see the launcher exit and conclude
+the game had ended, and nothing could stop the game afterwards.
+
+It then records the session in
+`~/.local/state/greenboost-gaming/session-<appid>.json`
+(`{wrapper_pid, appid, prefix, started_at}`), which is how the Gaming Suite
+finds the process to signal when you close it or pick **Stop game** from the
+tray.
+
+On `SIGTERM`/`SIGINT` the wrapper stops the whole tree , SIGTERM, five
+seconds, then SIGKILL for whatever ignored it , and then unwinds through its
+normal exit path, so the perf lock, the compositor, `gaming_mode` and the
+session summary are all restored exactly as on a clean quit. It exits 143
+(128 + SIGTERM) so the difference is visible in logs. Wine's own shared
+processes (`wineserver`, `services.exe`, `explorer.exe`, …) are never
+signalled: another game in a different prefix must not be collateral.
+
+If the kernel refuses the subreaper call, the wrapper says so and keeps
+going , the game runs normally, it just may not be fully stoppable from the
+Suite.
+
 ### 2. Injects GreenBoost environment variables
 
 All variables are written to `os.environ` so Proton Experimental inherits them when it starts.

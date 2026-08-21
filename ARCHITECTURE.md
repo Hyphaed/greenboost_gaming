@@ -44,8 +44,10 @@ exposes the existing pool to a second client API: Vulkan.
 │  Fan daemon (systemd user unit, gb_gaming/fan_daemon.py)        │
 └─────────────────────────────────────────────────────────────────┘
 
-  GreenBoost Proton wrapper
-    greenboost_proton/proton  (1 687-LOC Python)
+  GreenBoost Proton wrapper  ◄── SIGTERM from the Suite = "stop the game"
+    greenboost_proton/proton  (Python)
+    ├── PR_SET_CHILD_SUBREAPER , owns the whole game tree
+    ├── session record in ~/.local/state/greenboost-gaming/
     ├── per-game JSON profiles
     ├── pre/post hook runner
     ├── MangoHud / gamescope / gamemode argv chain
@@ -196,9 +198,56 @@ Views: `Status`, `Games`, `Displays`, `Profile`, `About`, `Live`.
 | `global_settings.rs` | Persistent settings JSON bridge to Python side |
 | `nvml_reader.rs` | NVML GPU metrics |
 | `live_stats.rs` | Real-time stats channel to frontend |
+| `nonsteam.rs` | `shortcuts.vdf` (binary KeyValues) + Battle.net `product.db` (protobuf) parsers , non-Steam game discovery |
+| `game_lifecycle.rs` | Bridge to `gb_gaming.game_lifecycle`; tray "Stop game", quit-time stop, stale-session pruning |
+| (same bridge) | Also calls `gb_gaming.power_baseline restore` at startup , puts back governor/power-limit/`gaming_mode` left applied by a crashed session |
 
 The Tauri backend shells out to `gb_gaming/*.py` for operations that need
 the Python stack (NVML fan, NVAPI DRS mapping, VRR D-Bus, DLSS patching).
+
+---
+
+## Game lifecycle , who owns the process tree
+
+Closing the Suite used to leave the game running, and nothing in the Suite
+could stop a game at all. Ownership now depends on who launched it, and the
+resolution order is fixed:
+
+1. **GreenBoost Proton wrapper** , when it launched the game. It calls
+   `prctl(PR_SET_CHILD_SUBREAPER)` before spawning anything, so a launcher
+   that forks the real game and exits hands its children to the wrapper
+   instead of to init. It records `{wrapper_pid, appid, prefix}` in
+   `~/.local/state/greenboost-gaming/session-<appid>.json`; signalling that
+   pid tears the tree down and still runs the wrapper's normal restore path
+   (perf lock, compositor, `gaming_mode`, session summary).
+2. **Steam's `reaper`** , when Steam launched it. Steam already wraps every
+   launch as `reaper SteamLaunch AppId=<appid> -- <game>` and does the same
+   prctl trick, so we signal Valve's reaper rather than reimplement it.
+3. **A bare wine process** , last resort; walk its tree ourselves.
+
+The walk reads `/proc/<pid>/task/<tid>/children`, the kernel's own child
+list, never a PPID scan , the children list survives an intermediate process
+exiting, a PPID scan does not. Termination is two-stage (SIGTERM, 5 s, then
+SIGKILL) and never touches `wineserver`, `services.exe`, `explorer.exe` and
+the rest of Wine's shared infrastructure, which another prefix may be using.
+
+One implementation, `gb_gaming/game_lifecycle.py`, shared by the wrapper and
+the Suite. Every stop emits a `gaming_session` event with
+`action="terminated"` carrying the method used and the orphan count; the
+governed view is `gb semantics segments gaming_mode_stuck`.
+
+---
+
+## Non-Steam games
+
+`scanner.rs`'s library walk cannot see them: a non-Steam shortcut has no
+appmanifest and its files live under `steamapps/compatdata/<appid>/pfx`.
+`nonsteam.rs` reads `userdata/*/config/shortcuts.vdf` (binary KeyValues:
+`0x00` nested / `0x01` string / `0x02` int32 / `0x08` end) for the launcher
+itself, then goes one level deeper , for a Battle.net prefix it decodes
+`drive_c/ProgramData/Battle.net/Agent/product.db` (protobuf) so the games
+installed *under* the launcher appear as their own entries, rather than one
+tile saying "Battle.net".
 
 ---
 
@@ -209,7 +258,7 @@ Installed to `$APP_LIB_DIR/gb_gaming/` by `install.sh`.
 
 | Module | Consumer(s) | Role |
 |---|---|---|
-| `game_scanner.py` | `ui/main.py` | Steam libraryfolders.vdf + appmanifest parser |
+| `game_scanner.py` | Tauri `scanner.rs` | Steam libraryfolders.vdf + appmanifest parser |
 | `dlss_updater.py` | Tauri `dlss.rs` + `sources.rs` | DLSS/FSR/XeSS DLL update |
 | `gpu_profile.py` | Tauri `profiles.rs` | GPU clock / power / fan profile r/w |
 | `global_settings.py` | Proton wrapper, Tauri `global_settings.rs` | Persistent JSON at `~/.config/greenboost-gaming/global_settings.json` |

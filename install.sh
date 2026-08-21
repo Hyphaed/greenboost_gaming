@@ -8,7 +8,7 @@
 #   1. The GreenBoost GVM Vulkan implicit layer (libVkLayer_greenboost.so +
 #      manifest) so that Vulkan applications see GPU VRAM + System DDR as one
 #      pool, overflowing through the GreenBoost CUDA path.
-#   2. The Gaming Suite GUI (GTK4 / Python, with optional Tauri build).
+#   2. The Gaming Suite GUI (Tauri: React + Rust).
 #   3. A `.desktop` entry + icon so the app shows up in the GNOME App Grid
 #      and KDE/XFCE menus.
 #   4. The `greenboost-gaming` CLI launcher.
@@ -36,6 +36,10 @@ step()    { printf "%s==>%s %s\n"        "$C_CYA" "$C_OFF" "$*"; }
 ok()      { printf "%s ✓%s %s\n"         "$C_GRN" "$C_OFF" "$*"; }
 warn()    { printf "%s ⚠%s %s\n"         "$C_YEL" "$C_OFF" "$*" >&2; }
 fail()    { printf "%s ✗%s %s\n"         "$C_RED" "$C_OFF" "$*" >&2; exit 1; }
+# err() prints one plain line to stderr without a glyph or an exit , used to
+# build the multi-line "what happened / what it costs / what still works /
+# the one command that fixes it" explanations that precede a fail().
+err()     { printf "%s%s%s\n"            "$C_RED" "$*" "$C_OFF" >&2; }
 heading() { printf "\n%s%s%s\n%s\n"      "$C_BOLD" "$*" "$C_OFF" \
                                           "$(printf '─%.0s' $(seq 1 ${#1}))"; }
 
@@ -69,6 +73,27 @@ DESKTOP_DIR="${DESTDIR}/usr/share/applications"
 ICON_DIR="${DESTDIR}/usr/share/icons/hicolor/scalable/apps"
 ICON_FALLBACK_DIR="${DESTDIR}/usr/share/icons/hicolor/128x128/apps"
 APP_LIB_DIR="${DESTDIR}${LIBDIR}/greenboost-gaming"
+
+# Every remaining system artifact this script creates. These live here, not
+# next to the install step that writes each one, because the uninstall path
+# runs long before those steps and has to name the same paths. Adding a new
+# installed artifact means adding it here AND to the uninstall block AND to
+# checks/allowlists/install_manifest.txt , that is the parity discipline.
+FAN_UNIT_DST="${DESTDIR}/usr/lib/systemd/user/gb-gaming-fan-daemon.service"
+POLKIT_RULE_DST="${DESTDIR}/etc/polkit-1/rules.d/60-greenboost-fan.rules"
+SUDOERS_DST="${DESTDIR}/etc/sudoers.d/60-greenboost-fan"
+UDEV_RULE_DST="${DESTDIR}/etc/udev/rules.d/99-greenboost-gaming.rules"
+TMPFILES_DST="${DESTDIR}/etc/tmpfiles.d/greenboost-gaming.conf"
+# Keeps the tmpfiles rule above OUT of the initramfs. It group-scopes
+# /sys/module/greenboost/parameters/gaming_mode, which cannot exist before the
+# module is loaded , so in the initrd it has nothing to act on, and instead
+# fails on every boot with "Failed to resolve group 'greenboost': Unknown
+# group" (the initrd is a different root filesystem and the group is not in
+# its /etc/group). GreenBoost core ships a broader exclusion hook; this one
+# covers a Gaming-Suite-only install, where that hook is not present.
+INITRAMFS_HOOK_DST="${DESTDIR}/etc/initramfs-tools/hooks/zz-greenboost-gaming-exclude"
+PROFILES_DST="${DESTDIR}/usr/share/greenboost-gaming/profiles/per-game"
+GB_GROUP="greenboost"
 APP_NAME="greenboost-gaming"
 APP_DISPLAY_NAME="GreenBoost Gaming Suite"
 # Must match `identifier` in src/src-tauri/tauri.conf.json. With that config's
@@ -138,7 +163,7 @@ detect_greenboost() {
 # Packages installed:
 #   - Vulkan loader + tools     (libvulkan1, vulkan-tools)
 #   - WebKit + dev headers for Tauri's WebView backend
-#   - Python GObject bindings for the GTK4 fallback GUI
+#   - Python GObject bindings (Gio/GLib) for the GNOME VRR + display helpers
 #   - Compiler toolchain so the Vulkan layer can build from source
 #
 # We use the distro's package manager directly; no curl-piped scripts.
@@ -169,8 +194,9 @@ install_system_deps() {
                 # Tauri WebView backend
                 libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev
                 libsoup-3.0-dev libayatana-appindicator3-dev librsvg2-dev
-                # GNOME VRR / DisplayConfig D-Bus helper (python3-gi required)
-                python3-gi gir1.2-glib-2.0 gir1.2-gtk-3.0 gir1.2-gtk-4.0 gir1.2-adw-1
+                # GNOME VRR / DisplayConfig D-Bus helper , gb_gaming's
+                # _vrr_gnome.py / _display_config.py need Gio + GLib only.
+                python3-gi gir1.2-glib-2.0
                 # Compiler + Tauri build toolchain (Rust + Node)
                 build-essential pkg-config
                 rustc cargo nodejs npm
@@ -196,7 +222,7 @@ install_system_deps() {
                 vulkan-loader vulkan-tools mesa-vulkan-drivers
                 webkit2gtk4.1-devel javascriptcoregtk4.1-devel
                 libsoup3-devel libappindicator-gtk3-devel librsvg2-devel
-                python3-gobject gtk3 gtk4 libadwaita
+                python3-gobject
                 gcc gcc-c++ pkgconf-pkg-config
                 rust cargo nodejs npm
                 mangohud
@@ -208,7 +234,7 @@ install_system_deps() {
             local pkgs=(
                 vulkan-icd-loader vulkan-tools
                 webkit2gtk-4.1 libsoup3 libappindicator-gtk3 librsvg
-                python-gobject gtk4 libadwaita
+                python-gobject
                 base-devel pkgconf
                 rust nodejs npm
                 mangohud
@@ -220,7 +246,7 @@ install_system_deps() {
             local pkgs=(
                 libvulkan1 vulkan-tools
                 webkit2gtk3-soup2-devel libsoup-devel
-                python3-gobject typelib-1_0-Gtk-4_0
+                python3-gobject
                 gcc gcc-c++ pkgconf-pkg-config
             )
             zypper install -y "${pkgs[@]}" \
@@ -228,7 +254,7 @@ install_system_deps() {
             ;;
         *)
             warn "unrecognised distro '$distro' , skipping auto-install"
-            warn "install Vulkan, GTK4 + Adwaita, WebKit2GTK 4.1, and a"
+            warn "install Vulkan, WebKit2GTK 4.1, and a"
             warn "C compiler manually before re-running this installer."
             return 0
             ;;
@@ -322,16 +348,11 @@ if [[ "$MODE" == "install" && $EUID -eq 0 && $NO_INSTALL_DEPS -ne 1 ]]; then
     install_system_deps
 elif [[ "$MODE" == "install" && $EUID -ne 0 ]]; then
     warn "running unprivileged , system dependency install skipped"
-    warn "  re-run with sudo to auto-install Vulkan, WebKit2GTK, GTK4, etc."
+    warn "  re-run with sudo to auto-install Vulkan, WebKit2GTK, etc."
 fi
 
-# Python 3 + GTK4 sanity check (GUI runs on GTK4 via PyGObject)
-HAS_GTK4=0
-if python3 -c 'import gi; gi.require_version("Gtk","4.0"); from gi.repository import Gtk' 2>/dev/null; then
-    HAS_GTK4=1
-fi
-
-# Optional Tauri toolchain (richer UI, big build dep)
+# Tauri toolchain , required. The GUI is Tauri (React + Rust); there is
+# no second GUI to fall back to since the GTK4 one was removed.
 HAS_TAURI=0
 if command -v cargo >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
     HAS_TAURI=1
@@ -352,9 +373,7 @@ case "$MODE" in
                "$([[ $HAS_TAURI -eq 1 ]] && echo yes || echo missing)"
         printf "  Tauri system libs:    %s\n" \
                "$(have_tauri_syslibs && echo yes || echo 'missing , see warning above')"
-        printf "  GTK4 (PyGObject):     %s   (fallback GUI)\n" \
-               "$([[ $HAS_GTK4 -eq 1 ]] && echo yes || echo missing)"
-        printf "\n  Default GUI:          tauri   (override: GREENBOOST_GUI=gtk4)\n"
+        printf "\n  GUI:                  tauri (React + Rust)\n"
         printf "\nWould install to:\n"
         printf "  Vulkan layer:      %s/VkLayer_greenboost.json\n"  "$VULKAN_LAYER_DIR"
         printf "                     %s/libVkLayer_greenboost.so\n" "$LIBDIR"
@@ -384,6 +403,19 @@ fi
 # in. Called once for the system destination and once for the user-home
 # mirror , each needs a different library_path, so the manifest can't just
 # be copied between them.
+# Writes a Vulkan implicit-layer manifest.
+#
+# disable_environment is NOT optional. The Vulkan loader treats an implicit
+# layer manifest without it as malformed and SKIPS THE LAYER ENTIRELY, with
+# only a warning behind VK_LOADER_DEBUG:
+#
+#   Layer "VK_LAYER_GREENBOOST_memory" doesn't contain required layer object
+#   disable_environment in the manifest JSON file, skipping this layer
+#
+# Nothing else reports a problem: the .so is installed, the Status view says
+# "Vulkan Layer: Installed" (it checks the file exists), and games simply run
+# without any GreenBoost involvement , no VRAM inflation, no T2/T3 overflow,
+# no NIS, no Reflex, no telemetry. Found 2026-08-20; see CHANGELOG.md.
 write_layer_manifest() {
     local dest_json="$1" lib_path="$2"
     cat > "$dest_json" <<EOF
@@ -398,6 +430,9 @@ write_layer_manifest() {
         "description": "GreenBoost virtual VRAM , inflates device-local heap and routes overflow allocations to T2/T3 DDR via DMA-BUF",
         "enable_environment": {
             "GREENBOOST_VULKAN": "1"
+        },
+        "disable_environment": {
+            "GREENBOOST_VULKAN_DISABLE": "1"
         }
     }
 }
@@ -407,6 +442,33 @@ EOF
 # ── uninstall ─────────────────────────────────────────────────────────
 if [[ "$MODE" == "uninstall" ]]; then
     heading "Uninstalling"
+
+    _REAL_USER="${SUDO_USER:-}"
+    _REAL_HOME=""
+    if [[ -n "$_REAL_USER" ]]; then
+        _REAL_HOME="$(getent passwd "$_REAL_USER" 2>/dev/null | cut -d: -f6)"
+    fi
+
+    # ── 1. the fan daemon, stopped before its unit file is removed ──────
+    # Order matters: removing the unit while the service is running leaves a
+    # daemon alive with no unit backing it, which `systemctl --user status`
+    # then reports as "not-found" while it keeps driving the fans.
+    if [[ -n "$_REAL_USER" ]]; then
+        sudo -u "$_REAL_USER" -H systemctl --user disable --now \
+            gb-gaming-fan-daemon.service >/dev/null 2>&1 || true
+    fi
+    rm -fv "$FAN_UNIT_DST" 2>/dev/null || true
+
+    # ── 2. privilege grants ────────────────────────────────────────────
+    # These come first among the file removals because leaving either one
+    # behind is worse than leaving a binary behind: the polkit rule grants
+    # passwordless root for the fan helper, and until 2026-08-20 it did so
+    # via a substring match that any local user could abuse (see
+    # scripts/60-greenboost-fan.rules). An uninstall that left it in place
+    # left that grant on the machine after the software was gone.
+    rm -fv "$POLKIT_RULE_DST" "$SUDOERS_DST" 2>/dev/null || true
+
+    # ── 3. layers, launcher, desktop integration, system rules ─────────
     rm -fv "$VULKAN_LAYER_DIR/VkLayer_greenboost.json" \
            "$LIBDIR/libVkLayer_greenboost.so" \
            "$LIBDIR/libgb_gl.so" \
@@ -414,20 +476,75 @@ if [[ "$MODE" == "uninstall" ]]; then
            "$DESKTOP_DIR/$APP_ID.desktop" \
            "$ICON_DIR/$APP_NAME.svg" \
            "$ICON_FALLBACK_DIR/$APP_NAME.png" \
-           "${DESTDIR}/etc/udev/rules.d/99-greenboost-gaming.rules" \
-           "${DESTDIR}/etc/tmpfiles.d/greenboost-gaming.conf" 2>/dev/null || true
+           "$UDEV_RULE_DST" \
+           "$TMPFILES_DST" \
+           "$INITRAMFS_HOOK_DST" 2>/dev/null || true
+    # The hook is gone; rebuild so the image matches a never-installed machine.
+    if [[ -z "$DESTDIR" ]] && command -v update-initramfs >/dev/null 2>&1; then
+        update-initramfs -u -k all >/dev/null 2>&1 || true
+    fi
     rm -rfv "$APP_LIB_DIR" 2>/dev/null || true
-    # Remove the $HOME mirror (Pressure Vessel / Steam sandbox visibility).
-    _REAL_USER="${SUDO_USER:-}"
-    if [[ -n "$_REAL_USER" ]]; then
-        _REAL_HOME="$(getent passwd "$_REAL_USER" 2>/dev/null | cut -d: -f6)"
-        if [[ -n "$_REAL_HOME" ]]; then
-            rm -fv "$_REAL_HOME/.local/share/vulkan/implicit_layer.d/VkLayer_greenboost.json" \
-                   "$_REAL_HOME/.local/lib/libVkLayer_greenboost.so" \
-                   "$_REAL_HOME/.local/lib/libgb_gl.so" \
-                2>/dev/null || true
-            rm -rfv "$_REAL_HOME/.local/lib/greenboost-gaming" 2>/dev/null || true
+
+    # ── 4. shipped per-game profiles ───────────────────────────────────
+    # Read-only reference data this installer wrote under /usr/share , not
+    # user data. The user's own overrides live in ~/.config/greenboost-gaming
+    # and are deliberately left alone (see the note at the end).
+    rm -rfv "${DESTDIR}/usr/share/greenboost-gaming" 2>/dev/null || true
+
+    # ── 5. the $HOME mirror (Pressure Vessel / Steam sandbox visibility) ─
+    if [[ -n "$_REAL_HOME" ]]; then
+        rm -fv "$_REAL_HOME/.local/share/vulkan/implicit_layer.d/VkLayer_greenboost.json" \
+               "$_REAL_HOME/.local/lib/libVkLayer_greenboost.so" \
+               "$_REAL_HOME/.local/lib/libgb_gl.so" \
+            2>/dev/null || true
+        rm -rfv "$_REAL_HOME/.local/lib/greenboost-gaming" 2>/dev/null || true
+        # Game-session records written by the Proton wrapper
+        # (gb_gaming/game_lifecycle.py's STATE_DIR). Created on demand at
+        # launch, never by this installer , but an uninstall that left them
+        # behind would leave the next install reading sessions for games that
+        # no longer have a Suite. Config (~/.config/greenboost-gaming) is
+        # deliberately kept, as noted at the end; this is runtime state, not
+        # settings.
+        rm -rfv "${XDG_STATE_HOME:-$_REAL_HOME/.local/state}/greenboost-gaming" \
+            2>/dev/null || true
+    fi
+
+    # ── 6. the Steam compatibility-tool copy ───────────────────────────
+    # Mirrors the install-side hand-off: install.sh calls
+    # greenboost_proton/install.sh as the real user, so uninstall must too.
+    # Steam runs that DEPLOYED copy, not the repo file , leaving it behind
+    # means Steam keeps offering a GreenBoost Proton that points at layers
+    # and helpers this uninstall just deleted.
+    if [[ -n "$_REAL_USER" && -x "$PROJECT_ROOT/greenboost_proton/install.sh" ]]; then
+        step "removing the Steam compatibility-tool copy"
+        sudo -u "$_REAL_USER" -H bash \
+            "$PROJECT_ROOT/greenboost_proton/install.sh" --uninstall || \
+            warn "the Proton compatibility-tool removal reported an error , check above"
+    fi
+
+    # ── 7. the greenboost group ────────────────────────────────────────
+    # Only when nobody else is still in it. The group is shared with the
+    # core GreenBoost install (it also grants access to the kernel module's
+    # sysfs parameters), so deleting it out from under a still-installed
+    # core would break that, and any user listed in it presumably still
+    # wants it.
+    if getent group "$GB_GROUP" >/dev/null 2>&1; then
+        _members="$(getent group "$GB_GROUP" | cut -d: -f4)"
+        if [[ -z "$_members" ]]; then
+            groupdel "$GB_GROUP" 2>/dev/null \
+                && ok "removed the '$GB_GROUP' group" \
+                || warn "could not remove the '$GB_GROUP' group , remove it manually with: sudo groupdel $GB_GROUP"
+        else
+            warn "left the '$GB_GROUP' group in place , still has members: $_members"
         fi
+    fi
+
+    # ── 8. reload the system databases we wrote into ───────────────────
+    if command -v udevadm >/dev/null 2>&1; then
+        udevadm control --reload-rules 2>/dev/null || true
+    fi
+    if command -v systemctl >/dev/null 2>&1 && [[ -n "$_REAL_USER" ]]; then
+        sudo -u "$_REAL_USER" -H systemctl --user daemon-reload 2>/dev/null || true
     fi
     if command -v gtk-update-icon-cache >/dev/null 2>&1; then
         gtk-update-icon-cache -fq /usr/share/icons/hicolor 2>/dev/null || true
@@ -435,7 +552,14 @@ if [[ "$MODE" == "uninstall" ]]; then
     if command -v update-desktop-database >/dev/null 2>&1; then
         update-desktop-database -q "$DESKTOP_DIR" 2>/dev/null || true
     fi
+
     ok "uninstalled"
+    printf "\n"
+    printf "Your own settings were left alone on purpose:\n"
+    printf "  ~/.config/greenboost-gaming/   per-game overrides, GPU profiles, global settings\n"
+    printf "  ~/.local/share/greenboost/     session history and the dataflux event log\n"
+    printf "  %s/libraries/   downloaded DLSS/Streamline DLLs\n" "$PROJECT_ROOT"
+    printf "Delete those by hand if you want a completely clean slate.\n"
     exit 0
 fi
 
@@ -512,111 +636,113 @@ heading "Installing GUI"
 
 install -d "$APP_LIB_DIR"
 
-# Default: Tauri (React + Rust + Tailwind) , this is the primary GUI
-# and matches the NVIDIA-app aesthetic (left sidebar, dark cards, green
-# accent).  Requires cargo + npm + system webkit2gtk libraries.
-# Fallback: Python GTK4 GUI , lean, no node/cargo, but visually plainer.
-# User override:  GREENBOOST_GUI=gtk4 ./install.sh
-GUI_KIND="${GREENBOOST_GUI:-tauri}"
+# The GUI is Tauri (React + Rust + Tailwind), matching the NVIDIA-app
+# aesthetic (left sidebar, dark cards, green accent). It requires cargo +
+# npm + the system webkit2gtk libraries.
+#
+# There is no second GUI. The Python GTK4 fallback was removed (2026-08-20)
+# along with its silent-downgrade path: when the Tauri toolchain was
+# missing, this script used to quietly install the plainer GTK4 app
+# instead, so a user who never read the scrollback ended up running a
+# different program than the one the docs describe. Missing build
+# dependencies now stop the install and say what to install.
 
-# Check for the Tauri Linux system dependencies (only needed if we'll
-# actually build the Tauri bundle).
+# Check for the Tauri Linux system dependencies.
 have_tauri_syslibs() {
     if ! command -v pkg-config >/dev/null 2>&1; then return 1; fi
     pkg-config --exists webkit2gtk-4.1 javascriptcoregtk-4.1 libsoup-3.0 2>/dev/null
 }
 
-case "$GUI_KIND" in
-    tauri)
-        if [[ $HAS_TAURI -ne 1 ]]; then
-            warn "Tauri requested (default) but cargo or npm missing on PATH."
-            warn "  Install Rust:  curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh"
-            warn "  Install Node:  use your distro package manager or nvm"
-            warn "Falling back to GTK4 GUI for this install."
-            GUI_KIND=gtk4
-        elif ! have_tauri_syslibs; then
-            warn "Tauri toolchain present but Linux WebKit dev libraries missing."
-            warn "  Debian/Ubuntu: sudo apt install libwebkit2gtk-4.1-dev \\"
-            warn "                                  libjavascriptcoregtk-4.1-dev \\"
-            warn "                                  libsoup-3.0-dev \\"
-            warn "                                  libayatana-appindicator3-dev \\"
-            warn "                                  librsvg2-dev"
-            warn "  Fedora:        sudo dnf install webkit2gtk4.1-devel \\"
-            warn "                                  javascriptcoregtk4.1-devel \\"
-            warn "                                  libsoup3-devel"
-            warn "  Arch:          sudo pacman -S webkit2gtk-4.1 libsoup3"
-            warn "Falling back to GTK4 GUI for this install."
-            GUI_KIND=gtk4
-        fi
-        ;;
-    gtk4) ;;
-    *) fail "unknown GREENBOOST_GUI='$GUI_KIND' (use 'tauri' or 'gtk4')" ;;
-esac
-
-if [[ "$GUI_KIND" == "tauri" ]]; then
-    step "building Tauri bundle (this can take several minutes)"
-    pushd "$PROJECT_ROOT/src" >/dev/null
-    # Build as the invoking user, not root , same reasoning as the
-    # greenboost_proton/install.sh hand-off further down. npm and cargo
-    # write into the source tree (src/dist/, src/node_modules/,
-    # src/src-tauri/target/) and into their own caches; doing that as root
-    # leaves root-owned build output behind in a user-owned checkout.
-    # Observed 2026-08-16: src/dist/assets/ owned by root:root from an
-    # earlier sudo install made every later unprivileged `npm run build`
-    # die with EACCES in vite's prepare-out-dir step, which reads as a
-    # broken toolchain rather than as a permissions leftover. Only the
-    # install(1) of the finished binary below needs to be root.
-    # Rust's equivalent of GB_GAMING_CFLAGS' -march=native , same
-    # never-leaves-this-box rationale as the C layers above.
-    if [[ -n "$_REAL_USER" ]]; then
-        # Heal a checkout an older root build already poisoned. Without
-        # this, switching to an unprivileged build just moves the EACCES
-        # from a future `npm run build` into this one.
-        # Test recursively, not just the top directory: the observed case
-        # was a user-owned src/dist containing a root-owned dist/assets,
-        # which a top-level ownership check walks straight past.
-        for _d in dist node_modules src-tauri/target; do
-            [[ -e "$_d" ]] || continue
-            if [[ -n "$(find "$_d" ! -user "$_REAL_USER" -print -quit 2>/dev/null)" ]]; then
-                warn "reclaiming root-owned files under src/$_d from an earlier privileged build"
-                chown -R "$_REAL_USER" "$_d"
-            fi
-        done
-        # PATH="$PATH" is load-bearing, not decoration. npm/node commonly
-        # live under ~/.nvm/versions/node/*/bin (they do on the machine
-        # this was written on), which is on nobody's secure_path , so a
-        # plain `sudo -u ... npm` resolves to nothing and the GUI build
-        # dies claiming npm is missing. We already hold a PATH that finds
-        # it (this script got here via npm-adjacent checks), so forward
-        # that rather than guessing at the user's shell rc files.
-        sudo -u "$_REAL_USER" -H env \
-            PATH="$PATH" \
-            RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=native" \
-            sh -c 'npm install --no-fund --no-audit && npm run tauri build'
-    else
-        npm install --no-fund --no-audit
-        RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=native" npm run tauri build
-    fi
-    popd >/dev/null
-    local_bin="$PROJECT_ROOT/src/src-tauri/target/release/tauri-app"
-    [[ -f $local_bin ]] || local_bin="$PROJECT_ROOT/src/src-tauri/target/release/greenboost-gaming"
-    install -m 0755 "$local_bin" "$APP_LIB_DIR/greenboost-gaming-gui"
-else
-    if [[ $HAS_GTK4 -ne 1 ]]; then
-        warn "PyGObject + GTK4 not detected; the GUI will fail to start until you install them:"
-        warn "  Debian/Ubuntu: sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1"
-        warn "  Fedora/Rocky:  sudo dnf install python3-gobject gtk4 libadwaita"
-        warn "  Arch:          sudo pacman -S python-gobject gtk4 libadwaita"
-    fi
-    install -m 0644 "$PROJECT_ROOT/ui/main.py" "$APP_LIB_DIR/greenboost_gaming_gui.py"
+if [[ $HAS_TAURI -ne 1 ]]; then
+    err "The GUI can't be built: cargo or npm isn't on PATH."
+    err ""
+    err "What that costs you: nothing else is affected , the Vulkan and OpenGL"
+    err "layers, the Proton wrapper, the fan daemon and the per-game profiles"
+    err "all install and work without the GUI. You just won't get the desktop"
+    err "app until the toolchain is present, and this install is stopping"
+    err "before it changes anything rather than half-installing."
+    err ""
+    err "To fix it:"
+    err "  Install Rust:  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+    err "  Install Node:  your distro package manager, or nvm"
+    err "Then re-run: sudo ./install.sh"
+    fail "Tauri toolchain missing"
 fi
 
-# Install the gb_gaming/ backend package regardless of GUI_KIND , it's not
-# just the GTK4 GUI's backend, it's also imported at runtime by the
+if ! have_tauri_syslibs; then
+    err "The GUI can't be built: the WebKit development libraries are missing."
+    err ""
+    err "What that costs you: same as above , everything except the desktop"
+    err "app is unaffected, and nothing has been installed yet."
+    err ""
+    err "To fix it, install the package set for your distro:"
+    err "  Debian/Ubuntu: sudo apt install libwebkit2gtk-4.1-dev \\"
+    err "                                  libjavascriptcoregtk-4.1-dev \\"
+    err "                                  libsoup-3.0-dev \\"
+    err "                                  libayatana-appindicator3-dev \\"
+    err "                                  librsvg2-dev"
+    err "  Fedora:        sudo dnf install webkit2gtk4.1-devel \\"
+    err "                                  javascriptcoregtk4.1-devel \\"
+    err "                                  libsoup3-devel"
+    err "  Arch:          sudo pacman -S webkit2gtk-4.1 libsoup3"
+    err "Then re-run: sudo ./install.sh"
+    fail "WebKit development libraries missing"
+fi
+
+step "building Tauri bundle (this can take several minutes)"
+pushd "$PROJECT_ROOT/src" >/dev/null
+# Build as the invoking user, not root , same reasoning as the
+# greenboost_proton/install.sh hand-off further down. npm and cargo
+# write into the source tree (src/dist/, src/node_modules/,
+# src/src-tauri/target/) and into their own caches; doing that as root
+# leaves root-owned build output behind in a user-owned checkout.
+# Observed 2026-08-16: src/dist/assets/ owned by root:root from an
+# earlier sudo install made every later unprivileged `npm run build`
+# die with EACCES in vite's prepare-out-dir step, which reads as a
+# broken toolchain rather than as a permissions leftover. Only the
+# install(1) of the finished binary below needs to be root.
+# Rust's equivalent of GB_GAMING_CFLAGS' -march=native , same
+# never-leaves-this-box rationale as the C layers above.
+if [[ -n "$_REAL_USER" ]]; then
+    # Heal a checkout an older root build already poisoned. Without
+    # this, switching to an unprivileged build just moves the EACCES
+    # from a future `npm run build` into this one.
+    # Test recursively, not just the top directory: the observed case
+    # was a user-owned src/dist containing a root-owned dist/assets,
+    # which a top-level ownership check walks straight past.
+    for _d in dist node_modules src-tauri/target; do
+        [[ -e "$_d" ]] || continue
+        if [[ -n "$(find "$_d" ! -user "$_REAL_USER" -print -quit 2>/dev/null)" ]]; then
+            warn "reclaiming root-owned files under src/$_d from an earlier privileged build"
+            chown -R "$_REAL_USER" "$_d"
+        fi
+    done
+    # PATH="$PATH" is load-bearing, not decoration. npm/node commonly
+    # live under ~/.nvm/versions/node/*/bin (they do on the machine
+    # this was written on), which is on nobody's secure_path , so a
+    # plain `sudo -u ... npm` resolves to nothing and the GUI build
+    # dies claiming npm is missing. We already hold a PATH that finds
+    # it (this script got here via npm-adjacent checks), so forward
+    # that rather than guessing at the user's shell rc files.
+    sudo -u "$_REAL_USER" -H env \
+        PATH="$PATH" \
+        RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=native" \
+        sh -c 'npm install --no-fund --no-audit && npm run tauri build'
+else
+    npm install --no-fund --no-audit
+    RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=native" npm run tauri build
+fi
+popd >/dev/null
+local_bin="$PROJECT_ROOT/src/src-tauri/target/release/tauri-app"
+[[ -f $local_bin ]] || local_bin="$PROJECT_ROOT/src/src-tauri/target/release/greenboost-gaming"
+install -m 0755 "$local_bin" "$APP_LIB_DIR/greenboost-gaming-gui"
+
+# Install the gb_gaming/ backend package. It is imported at runtime by the
 # GreenBoost Proton wrapper (global_settings, nvml_control) and consumed by
-# the fan daemon. Gating it behind the gtk4 branch left it uninstalled on
-# every default (tauri) install, so the Proton wrapper's
-# `from gb_gaming import global_settings` always failed.
+# the fan daemon, so it is not optional. It used to be gated behind the
+# (now removed) GTK4 branch, which left it uninstalled on every default
+# install and made the Proton wrapper's `from gb_gaming import
+# global_settings` fail every time.
 if [[ -d "$PROJECT_ROOT/gb_gaming" ]]; then
     install -d "$APP_LIB_DIR/gb_gaming"
     for f in "$PROJECT_ROOT"/gb_gaming/*.py; do
@@ -702,7 +828,23 @@ if [[ -x "$GB_PROTON_INSTALLER" ]]; then
         if sudo -u "$_REAL_USER" -H "$GB_PROTON_INSTALLER"; then
             ok "Steam compatibility tool deployed/refreshed for $_REAL_USER"
         else
-            warn "greenboost_proton/install.sh failed , Steam's compatibility-tool copy may still be stale"
+            warn "greenboost_proton/install.sh failed , Steam is still using the PREVIOUS GreenBoost Proton, not the one in this checkout"
+            cat >&2 <<'EOF'
+
+  What that costs you: the rest of this install succeeded, but your games
+  will keep launching through whatever GreenBoost Proton was deployed last
+  time. Any wrapper fix in this checkout will not reach them.
+
+  Nothing is broken , Steam and your existing games are untouched, and the
+  previous wrapper still works exactly as it did before this run.
+
+  The output above says why it refused. The usual cause is Python syntax the
+  Steam runtime cannot parse, which that installer now checks for on purpose
+  rather than shipping and failing at launch time. Fix what it named, then:
+
+    ./greenboost_proton/install.sh
+
+EOF
         fi
     else
         warn "could not resolve invoking user , run 'greenboost_proton/install.sh' yourself (as your normal user, no sudo) to deploy/refresh the Steam compatibility tool"
@@ -715,7 +857,6 @@ fi
 heading "Installing fan-curve daemon"
 
 FAN_UNIT_SRC="$PROJECT_ROOT/scripts/gb-gaming-fan-daemon.service"
-FAN_UNIT_DST="${DESTDIR}/usr/lib/systemd/user/gb-gaming-fan-daemon.service"
 if [[ -f "$FAN_UNIT_SRC" ]]; then
     install -d "$(dirname "$FAN_UNIT_DST")"
     install -m 0644 "$FAN_UNIT_SRC" "$FAN_UNIT_DST"
@@ -736,7 +877,6 @@ fi
 heading "Installing NVML fan control polkit rule"
 
 POLKIT_RULE_SRC="$PROJECT_ROOT/scripts/60-greenboost-fan.rules"
-POLKIT_RULE_DST="${DESTDIR}/etc/polkit-1/rules.d/60-greenboost-fan.rules"
 if [[ -f "$POLKIT_RULE_SRC" ]]; then
     install -d "$(dirname "$POLKIT_RULE_DST")"
     install -m 0644 "$POLKIT_RULE_SRC" "$POLKIT_RULE_DST"
@@ -749,7 +889,6 @@ fi
 heading "Installing NVML fan control sudoers rule"
 
 SUDOERS_SRC="$PROJECT_ROOT/scripts/60-greenboost-fan.sudoers"
-SUDOERS_DST="${DESTDIR}/etc/sudoers.d/60-greenboost-fan"
 if [[ -f "$SUDOERS_SRC" ]]; then
     # Validate the file before installing (visudo -c)
     if visudo -cf "$SUDOERS_SRC" 2>/dev/null; then
@@ -780,9 +919,7 @@ if [[ -n "$_REAL_USER" ]] && ! id -nG "$_REAL_USER" 2>/dev/null | grep -qw green
 fi
 
 UDEV_RULE_SRC="$PROJECT_ROOT/scripts/99-greenboost-gaming.rules"
-UDEV_RULE_DST="${DESTDIR}/etc/udev/rules.d/99-greenboost-gaming.rules"
 TMPFILES_SRC="$PROJECT_ROOT/scripts/greenboost-gaming.tmpfiles.conf"
-TMPFILES_DST="${DESTDIR}/etc/tmpfiles.d/greenboost-gaming.conf"
 
 if [[ -f "$UDEV_RULE_SRC" ]]; then
     install -d "$(dirname "$UDEV_RULE_DST")"
@@ -798,6 +935,34 @@ if [[ -f "$TMPFILES_SRC" ]]; then
     ok "tmpfiles rule installed , covers greenboost.ko already loaded at boot"
 else
     warn "tmpfiles rule not found at $TMPFILES_SRC , skipping"
+fi
+
+# Initramfs exclusion for the rule we just installed (see INITRAMFS_HOOK_DST).
+if [[ -d "${DESTDIR}/etc/initramfs-tools/hooks" ]] || [[ -d "${DESTDIR}/etc/initramfs-tools" ]]; then
+    install -d "$(dirname "$INITRAMFS_HOOK_DST")"
+    cat > "$INITRAMFS_HOOK_DST" <<'HOOKEOF'
+#!/bin/sh
+# Installed by greenboost_gaming/install.sh , see INITRAMFS_HOOK_DST there.
+# The tmpfiles rule this removes acts on /sys/module/greenboost/, which does
+# not exist in early userspace; leaving it in the image only produces a
+# "Failed to resolve group 'greenboost'" failure on every boot.
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "${1:-}" in
+    prereqs) prereqs; exit 0 ;;
+esac
+[ -n "${DESTDIR:-}" ] || exit 0
+rm -f "$DESTDIR"/etc/tmpfiles.d/greenboost-gaming.conf \
+      "$DESTDIR"/usr/lib/tmpfiles.d/greenboost-gaming.conf 2>/dev/null || true
+exit 0
+HOOKEOF
+    chmod 0755 "$INITRAMFS_HOOK_DST"
+    ok "initramfs exclusion installed , the tmpfiles rule stays out of the boot image"
+    if [[ -z "$DESTDIR" ]] && command -v update-initramfs >/dev/null 2>&1; then
+        update-initramfs -u -k all >/dev/null 2>&1 \
+            && ok "initramfs regenerated" \
+            || warn "update-initramfs failed , run: sudo update-initramfs -u -k all"
+    fi
 fi
 
 # Apply both immediately so this takes effect without a reboot.
@@ -819,7 +984,6 @@ fi
 heading "Installing per-game optimization profiles"
 
 PROFILES_SRC="$PROJECT_ROOT/profiles/per-game"
-PROFILES_DST="${DESTDIR}/usr/share/greenboost-gaming/profiles/per-game"
 if [[ -d "$PROFILES_SRC" ]]; then
     install -d "$PROFILES_DST"
     for f in "$PROFILES_SRC"/*.json; do
@@ -849,19 +1013,13 @@ if [[ "\$_XDG" == "wayland" ]] || [[ -n "\${WAYLAND_DISPLAY:-}" ]]; then
     export PROTON_ENABLE_WAYLAND=\${PROTON_ENABLE_WAYLAND:-1}
 fi
 
-GUI_KIND="$GUI_KIND"
 APP_LIB_DIR="$LIBDIR/greenboost-gaming"
 
-case "\$GUI_KIND" in
-    tauri)
-        exec "\$APP_LIB_DIR/greenboost-gaming-gui" "\$@"
-        ;;
-    gtk4|*)
-        # Make the gb_gaming backend package importable from the install dir.
-        export PYTHONPATH="\$APP_LIB_DIR:\${PYTHONPATH:-}"
-        exec python3 "\$APP_LIB_DIR/greenboost_gaming_gui.py" "\$@"
-        ;;
-esac
+# Make the gb_gaming backend package importable from the install dir , the
+# Proton wrapper and the fan daemon both import it, and so will the CLI.
+export PYTHONPATH="\$APP_LIB_DIR:\${PYTHONPATH:-}"
+
+exec "\$APP_LIB_DIR/greenboost-gaming-gui" "\$@"
 EOF
 chmod 0755 "$BINDIR/$APP_NAME"
 ok "launcher installed at $BINDIR/$APP_NAME"

@@ -84,6 +84,18 @@ class GlobalSettings:
     # launch_game command honours this when set.  User restores
     # secondaries manually from the Displays panel afterwards.
     auto_disable_secondary_on_launch: bool = False
+    # Launch Steam minimised to tray (`steam -silent`) when the Suite starts a
+    # game and Steam is not already running, and launch via `steam -applaunch`
+    # rather than the steam:// URL handler, whose desktop activation is what
+    # raises the Steam window over the game. Read by the Tauri backend, not by
+    # the Proton wrapper. Steam has no option to hide its tray ICON , that
+    # stays regardless.
+    steam_silent_launch: bool = True
+    # Explicit upstream Proton for the wrapper to build on , the `proton`
+    # script or the directory holding it. Empty means auto-detect. Exists
+    # because a user with only a distro Proton build (Proton-CachyOS, reported
+    # 2026-08-20) previously had to hand-edit the wrapper to launch anything.
+    proton_upstream:  str  = ""         # GREENBOOST_PROTON_UPSTREAM
 
     # ── PR-GGGG: GreenBoost runtime feature toggles ────────────────────
     # These flip GREENBOOST_* env vars consumed by the Proton wrapper +
@@ -341,6 +353,9 @@ def as_env_dict(s: GlobalSettings | None = None) -> dict[str, str]:
     if s.vkd3d_config:
         out["VKD3D_CONFIG"]                 = s.vkd3d_config
     out["GREENBOOST_AFFINITY"]              = s.affinity_mode or "all"
+
+    if s.proton_upstream:
+        out["GREENBOOST_PROTON_UPSTREAM"]   = s.proton_upstream
 
     # OpenGL layer , proton wrapper reads GREENBOOST_OPENGL to enable/disable
     # injection of libgb_gl.so, and the layer reads GREENBOOST_GL_OVERFLOW_MIN_MB

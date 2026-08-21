@@ -37,7 +37,9 @@ for arg in "$@"; do
             echo "Usage: $0 [--uninstall]"
             echo "  install (default): install greenboost-proton + experimental"
             echo "                     into every detected Steam root"
-            echo "  --uninstall:       remove both variants from every Steam root"
+            echo "  --uninstall:       remove both variants from every Steam root,"
+            echo "                     plus the staged NIS shaders and the"
+            echo "                     dxvk-gplasync download cache under ~/.local/share"
             exit 0 ;;
         *) echo "Unknown argument: $arg (try --help)" >&2; exit 2 ;;
     esac
@@ -56,6 +58,20 @@ if [[ "$MODE" == "uninstall" ]]; then
             fi
         done
     done
+    # The compat-tool tree is not the only thing install mode writes into
+    # $HOME. Leaving these behind meant a "full uninstall" still left ~200 MB
+    # of staged shaders and a downloaded DXVK build on disk, and the next
+    # install silently reused whatever version was already cached instead of
+    # honouring GB_GPLASYNC_VERSION.
+    for stale in "$HOME/.local/share/greenboost/nis" \
+                 "$HOME/.local/share/greenboost/dxvk-gplasync"; do
+        if [[ -d "$stale" ]]; then
+            echo "Removing $stale ..."
+            rm -rf "$stale"
+            found_any=1
+        fi
+    done
+
     if [[ $found_any -eq 0 ]]; then
         echo "GreenBoost Proton was not installed in any Steam root."
     else
@@ -64,13 +80,105 @@ if [[ "$MODE" == "uninstall" ]]; then
     exit 0
 fi
 
-PAYLOAD=( proton compatibilitytool.vdf toolmanifest.vdf version channel )
+PAYLOAD=( proton gb_proton_main.py compatibilitytool.vdf toolmanifest.vdf version channel )
 
 # Confirm every payload file is present (fail early, not mid-install).
 for f in "${PAYLOAD[@]}"; do
     [[ -f "$SCRIPT_DIR/$f" ]] \
         || { echo "FATAL: missing payload file '$f'" >&2; exit 1; }
 done
+
+# ── Syntax gate , the wrapper must parse on the interpreter that RUNS it ────
+#
+# Steam does not run the compat tool with the host python3.  toolmanifest.vdf
+# declares `require_tool_appid 1628350`, so the wrapper executes inside the
+# Steam Linux Runtime ("sniper") container, whose /usr/bin/python3 is 3.9.2.
+# A host running 3.12+ will happily `py_compile` syntax that container Python
+# cannot read, and the failure only appears at launch time as a game that
+# starts and stops within a second.
+#
+# Confirmed live 2026-08-20: a PEP 701 f-string took down every launch with
+# "SyntaxError: EOL while scanning string literal" while the same file
+# compiled cleanly on the 3.14 host.  Nothing checked, so it shipped.
+#
+# Preference order is "closest to the truth first": the real container, then
+# any old interpreter on PATH, then the host with an explicit admission that
+# the real check did not happen.
+GB_MIN_PY_DESC=""
+gb_syntax_gate() {
+    local sniper runner py
+    local -a files=( "$SCRIPT_DIR/proton" "$SCRIPT_DIR/gb_proton_main.py" )
+
+    for ROOT in "${CANDIDATE_ROOTS[@]}"; do
+        sniper="$ROOT/steamapps/common/SteamLinuxRuntime_sniper/run-in-sniper"
+        if [[ -x "$sniper" ]]; then
+            runner="$sniper"
+            break
+        fi
+    done
+
+    if [[ -n "${runner:-}" ]]; then
+        GB_MIN_PY_DESC="Steam's sniper runtime python3"
+        "$runner" -- python3 -m py_compile "${files[@]}"
+        return $?
+    fi
+
+    for py in python3.9 python3.10 python3.11; do
+        if command -v "$py" >/dev/null 2>&1; then
+            GB_MIN_PY_DESC="$py"
+            "$py" -m py_compile "${files[@]}"
+            return $?
+        fi
+    done
+
+    GB_MIN_PY_DESC="host python3 (SKIPPED the 3.9 check)"
+    python3 -m py_compile "${files[@]}"
+    return $?
+}
+
+echo "Checking the wrapper parses on the Python that will run it ..."
+if gb_syntax_gate; then
+    if [[ "$GB_MIN_PY_DESC" == host* ]]; then
+        cat >&2 <<'EOF'
+
+WARNING: the wrapper was only checked against this machine's python3.
+
+  Neither Steam's sniper runtime nor a python3.9/3.10/3.11 was available, so
+  the check that actually matters did not run. The wrapper may still fail to
+  parse at launch time.
+
+  What that costs you: nothing right now, and nothing is broken , the install
+  continues and the wrapper is very likely fine. You just do not have proof.
+
+  To get the real check, start Steam once so it downloads the runtime, then
+  re-run this installer.
+
+EOF
+    else
+        echo "  OK , parses on $GB_MIN_PY_DESC."
+    fi
+else
+    cat >&2 <<EOF
+
+Refusing to install: the GreenBoost Proton wrapper does not parse on
+$GB_MIN_PY_DESC, which is the interpreter Steam uses to run it.
+
+What that costs you: nothing yet. Your existing install was left exactly as
+it was, and your games still launch the way they did before this run. What
+was prevented is a deploy that would have made every launch fail with a game
+that starts and immediately stops.
+
+The error above names the file and line. It is almost always Python syntax
+newer than 3.9: a PEP 701 f-string (a newline or a same-type nested quote
+inside {...}), a match statement, except*, tomllib, or zip(strict=). Fix it
+in greenboost_proton/gb_proton_main.py and run this again:
+
+  ./greenboost_proton/install.sh
+
+EOF
+    exit 1
+fi
+find "$SCRIPT_DIR" -name '__pycache__' -maxdepth 1 -type d -exec rm -rf {} + 2>/dev/null || true
 
 # PR-GGGG: stage NVIDIA Image Scaling (NIS) shader source into the
 # GreenBoost runtime cache.  Today this only copies the GLSL / HLSL /

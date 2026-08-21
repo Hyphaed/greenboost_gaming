@@ -20,6 +20,23 @@ export const GS_INFO: Record<string, string> = {
     "A non-HDR monitor reading an HDR signal typically looks washed out "
     + "or grey, not just \"less good\" , this isn't subtle. If you're not "
     + "certain your display is HDR-capable, leave this off.",
+  "Upstream Proton":
+    "Leave this on Automatic unless a game misbehaves. It exists for two "
+    + "cases: you run a distro Proton build (Proton-CachyOS, Proton-GE, "
+    + "proton-tkg) that automatic detection would pass over in favour of "
+    + "Valve's, or a specific title only works on one particular Proton. "
+    + "Changing it affects every game you launch through GreenBoost, so a "
+    + "per-game fix belongs in that game's own compatibility setting in "
+    + "Steam instead.",
+  "Keep Steam out of the way":
+    "How well this works depends on your desktop, and it is worth knowing "
+    + "which one you have. If Steam was not already running, it starts in "
+    + "the tray and no Steam window ever appears , that part works "
+    + "everywhere. If Steam was already open, minimising its window needs "
+    + "the desktop's cooperation: X11 and KDE allow it, GNOME on Wayland "
+    + "does not let any application touch another application's window, so "
+    + "there the Steam window stays where you left it. Either way the tray "
+    + "icon remains, because Steam has no option to hide it.",
   "Wayland":
     "Overriding the auto-detected value only matters if a specific game "
     + "renders incorrectly or won't launch under your current session type "
@@ -34,6 +51,21 @@ export const GS_INFO: Record<string, string> = {
     + "manually update each game's DLL yourself. The rare downside: a "
     + "brand-new DLSS build can occasionally be less stable in one "
     + "specific title before NVIDIA patches it.",
+  "Close to system tray":
+    "With this on, the Suite keeps running in the background after you close "
+    + "the window, so it can still watch the game and stop it for you. Turn "
+    + "it off and closing the window exits the Suite outright, the way it "
+    + "behaved before , the game then keeps running with nothing supervising "
+    + "it. If your desktop has no tray, the Suite falls back to exiting and "
+    + "tells you so.",
+
+  "Stop the game when you quit":
+    "The way Steam behaves: quitting the Suite also closes the game it "
+    + "launched. The game is asked to exit first and only force-killed if it "
+    + "ignores that, so saves get flushed. Wine's own background processes "
+    + "are left alone, so another game running in a different prefix is not "
+    + "affected.",
+
   "Cinema mode on launch":
     "Useful if a game's fullscreen detection gets confused by a second "
     + "monitor and launches windowed or at the wrong resolution. GreenBoost "
@@ -241,6 +273,10 @@ export const GS_INFO: Record<string, string> = {
 // where the row IS that exact feature, so the two panels never describe
 // the same thing in two different ways.
 export const GS_BENEFIT: Record<string, string> = {
+  "Keep Steam out of the way":
+    "No Steam window on top of your game",
+  "Upstream Proton":
+    "Works with distro Proton builds, not just Valve's",
   "Background shader compiling":
     "Removes the freeze when something new appears on screen.",
   "Remember compiled shaders":
@@ -283,6 +319,8 @@ export const GS_BENEFIT: Record<string, string> = {
 // Detected GPU / Session are read-only and carry no claim either way.
 export const GS_ADDED_BY_GB: Record<string, string> = {
   // DRIVER SETTINGS , app-implemented, no env var
+  "Close to system tray": "Display & session",
+  "Stop the game when you quit": "Display & session",
   "Cinema mode on launch": "Display & session",
 
   // GREENBOOST RUNTIME , VULKAN LAYER

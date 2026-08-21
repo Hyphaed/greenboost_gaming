@@ -532,6 +532,92 @@ pub fn installdir_appid_map() -> HashMap<String, String> {
     map
 }
 
+/// Scan games added to Steam as non-Steam shortcuts.
+///
+/// These are invisible to `scan_games()`'s library walk: a shortcut has no
+/// appmanifest and its files live under `steamapps/compatdata/<appid>/pfx`,
+/// not `steamapps/common`. The user-visible case that forced this is a
+/// Battle.net launcher installed into its own Proton prefix.
+///
+/// Two levels are produced:
+///   * the shortcut itself (the launcher), and
+///   * for a Battle.net prefix, the games installed *under* it, read from
+///     Blizzard's own `product.db` inside the prefix , because a tile
+///     saying "Battle.net" is not the game the user wants to launch.
+pub fn scan_shortcut_games() -> Vec<Game> {
+    let target_dlls: HashMap<&str, &str> = nvidia_dll_target_map();
+    let mut games: Vec<Game> = Vec::new();
+
+    // A prefix is large (14 GB was measured on the reference box) and most
+    // of it is Wine, not game files. Cap the DLL walk instead of letting a
+    // scan of one launcher stall the whole Games view.
+    fn dlls_under(dir: &Path, target_dlls: &HashMap<&str, &str>) -> Vec<GameDll> {
+        let mut found = Vec::new();
+        for walk_entry in WalkDir::new(dir).max_depth(6).into_iter().flatten() {
+            let f_path = walk_entry.path();
+            if !f_path.is_file() { continue; }
+            if let Some(f_name) = f_path.file_name().and_then(|n| n.to_str()) {
+                if let Some(&tech) = target_dlls.get(f_name.to_lowercase().as_str()) {
+                    found.push(GameDll {
+                        name: f_name.to_string(),
+                        path: f_path.to_string_lossy().to_string(),
+                        version: get_dll_version(f_path),
+                        tech_type: tech.to_string(),
+                    });
+                }
+            }
+        }
+        found
+    }
+
+    for sc in crate::nonsteam::read_shortcuts() {
+        if sc.is_hidden || sc.exe.is_empty() { continue; }
+        let exe = PathBuf::from(&sc.exe);
+        // A shortcut whose target is gone is a leftover, not a game.
+        if !exe.is_file() { continue; }
+        let Some(launcher_dir) = exe.parent().map(|p| p.to_path_buf()) else { continue };
+
+        // Steam's own icon for the shortcut, when the user set one. No CDN
+        // fallback here , a non-Steam appid has no artwork on Steam's CDN.
+        let image = if !sc.icon.is_empty() && Path::new(&sc.icon).is_file() {
+            Some(sc.icon.clone())
+        } else {
+            None
+        };
+
+        games.push(Game {
+            name: if sc.app_name.is_empty() {
+                exe.file_stem().map(|s| s.to_string_lossy().into_owned())
+                   .unwrap_or_else(|| "Non-Steam game".to_string())
+            } else { sc.app_name.clone() },
+            path: launcher_dir.to_string_lossy().to_string(),
+            appid: Some(sc.appid.to_string()),
+            image,
+            dlls: dlls_under(&launcher_dir, &target_dlls),
+            optimizations: Vec::new(),
+            is_optimized: game_is_optimized(&launcher_dir),
+            has_backup: game_has_backup(&launcher_dir),
+        });
+
+        for (name, dir) in crate::nonsteam::battlenet_games(&sc.exe) {
+            games.push(Game {
+                name,
+                path: dir.to_string_lossy().to_string(),
+                // Same shortcut appid: launching any of them goes through
+                // the same Battle.net launcher.
+                appid: Some(sc.appid.to_string()),
+                image: None,
+                dlls: dlls_under(&dir, &target_dlls),
+                optimizations: Vec::new(),
+                is_optimized: game_is_optimized(&dir),
+                has_backup: game_has_backup(&dir),
+            });
+        }
+    }
+
+    games
+}
+
 pub fn scan_games() -> Vec<Game> {
     let libraries = get_steam_libraries();
     let mut games: HashMap<String, Game> = HashMap::new();
@@ -597,8 +683,10 @@ pub fn scan_games() -> Vec<Game> {
         }
     }
 
-    // Merge Heroic and Lutris games (deduplicate by path)
-    for g in scan_heroic_games().into_iter().chain(scan_lutris_games()) {
+    // Merge Heroic, Lutris and non-Steam shortcut games (deduplicate by path)
+    for g in scan_heroic_games().into_iter()
+                                .chain(scan_lutris_games())
+                                .chain(scan_shortcut_games()) {
         games.entry(g.path.clone()).or_insert(g);
     }
 

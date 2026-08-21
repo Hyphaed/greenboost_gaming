@@ -63,6 +63,17 @@ pub struct ComponentUpdate {
     /// True when the component isn't installed at all , the UI should offer
     /// "install" rather than "update", and never claim you're out of date.
     pub not_installed: bool,
+    /// Core only: the version of the kernel module currently RUNNING, which
+    /// is not necessarily the one on disk , a new core is installed by the
+    /// installer but only becomes live when the module is reloaded. None
+    /// when the module isn't loaded, or for the Suite.
+    #[serde(default)]
+    pub loaded: Option<String>,
+    /// True when `installed` and `loaded` are both known and differ: the new
+    /// build is on disk but the old module is still the one running. This is
+    /// a reload, NOT an upgrade , the UI must not offer "Upgrade now" for it.
+    #[serde(default)]
+    pub reload_needed: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -137,6 +148,16 @@ fn is_newer(latest: &str, installed: &str) -> bool {
     false
 }
 
+/// True when a newer build is on disk than the one currently running.
+/// Both sides must be known , an unloaded module or an unreadable build
+/// stamp is "we can't tell", never "something is wrong".
+fn reload_needed(installed: &Option<String>, loaded: &Option<String>) -> bool {
+    match (installed, loaded) {
+        (Some(i), Some(l)) => i != l,
+        _ => false,
+    }
+}
+
 // ── Installed-version probes ───────────────────────────────────────────
 
 /// This binary's version. Built in, so it cannot drift from what's running.
@@ -156,27 +177,64 @@ fn looks_like_version(tok: &str) -> bool {
         && t.chars().all(|c| c.is_ascii_digit() || c == '.')
 }
 
+/// The version of the kernel module currently LOADED, via sysfs. None when
+/// the module isn't loaded , which is a normal state, not a failure.
+fn loaded_core_version() -> Option<String> {
+    let v = std::fs::read_to_string("/sys/module/greenboost/version").ok()?;
+    let v = v.trim();
+    if looks_like_version(v) { Some(normalise(v)) } else { None }
+}
+
+/// What the core INSTALLER last put on this machine, from the build stamp it
+/// writes at `/etc/greenboost/build_info` (`BUILD_VERSION=3.4`).
+///
+/// This is the authority for "which release is installed", and it is
+/// deliberately preferred over the module's own MODULE_VERSION: the module
+/// literal is hand-maintained in greenboost.c and has drifted from the
+/// release it shipped in before (2026-08-20, core shipped 3.4 while the
+/// module still said 3.2 , which made this very card offer an upgrade to a
+/// release that was already installed).
+fn installed_core_build_version() -> Option<String> {
+    let raw = std::fs::read_to_string("/etc/greenboost/build_info").ok()?;
+    for line in raw.lines() {
+        if let Some(v) = line.trim().strip_prefix("BUILD_VERSION=") {
+            let v = v.trim();
+            if looks_like_version(v) {
+                return Some(normalise(v));
+            }
+        }
+    }
+    None
+}
+
 /// GreenBoost core's version.
 ///
-/// Returns `(version, installed_at_all)`. The second flag matters: a machine
-/// with no GreenBoost core is a normal, supported configuration (most of the
-/// Suite works without it), and must not be reported as "out of date".
+/// Returns `(installed, loaded, installed_at_all)`.
 ///
-/// Order is deliberate, and differs from `detect_greenboost()` in install.sh
-/// on purpose. That function probes the CLI first because it only needs to
-/// know whether core is *present*. We need a version, and as of core v3.2
-/// `greenboost --version` is not a command , it prints
-/// "Unknown command: '--version'" and still **exits 0**, so a naive reader
-/// treats its usage text as a version string. sysfs and modinfo report the
-/// module's real version ("3.2"), so they go first and the CLI is a strictly
-/// validated fallback.
-fn installed_core_version() -> (Option<String>, bool) {
+/// `installed` is what's on disk; `loaded` is what's running. They differ
+/// when core was upgraded but the module hasn't been reloaded , a real,
+/// recoverable state that must read as "reload it", never as "you're out of
+/// date". The `installed_at_all` flag matters separately: a machine with no
+/// GreenBoost core is a normal, supported configuration (most of the Suite
+/// works without it), and must not be reported as out of date either.
+///
+/// Probe order is deliberate, and differs from `detect_greenboost()` in
+/// install.sh on purpose. That function probes the CLI first because it only
+/// needs to know whether core is *present*. We need a version, and as of core
+/// v3.4 `greenboost --version` is still not a command , it prints
+/// "Unknown command: '--version'" and **exits 0**, so a naive reader treats
+/// its usage text as a version string. The build stamp, then sysfs/modinfo,
+/// go first; the CLI stays a strictly validated fallback.
+fn installed_core_version() -> (Option<String>, Option<String>, bool) {
+    let loaded = loaded_core_version();
+
+    // 0. The installer's own build stamp , the release that is on disk.
+    if let Some(v) = installed_core_build_version() {
+        return (Some(v), loaded, true);
+    }
     // 1. The loaded kernel module reports its own version via sysfs.
-    if let Ok(v) = std::fs::read_to_string("/sys/module/greenboost/version") {
-        let v = v.trim();
-        if looks_like_version(v) {
-            return (Some(normalise(v)), true);
-        }
+    if let Some(v) = loaded.clone() {
+        return (Some(v), loaded, true);
     }
     // 2. modinfo reads the .ko without needing it loaded.
     if let Ok(out) = std::process::Command::new("modinfo")
@@ -185,7 +243,7 @@ fn installed_core_version() -> (Option<String>, bool) {
         if out.status.success() {
             let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
             if looks_like_version(&v) {
-                return (Some(normalise(&v)), true);
+                return (Some(normalise(&v)), loaded, true);
             }
         }
     }
@@ -196,20 +254,20 @@ fn installed_core_version() -> (Option<String>, bool) {
         if let Some(tok) = text.lines().next()
             .and_then(|l| l.split_whitespace().find(|t| looks_like_version(t)))
         {
-            return (Some(normalise(tok)), true);
+            return (Some(normalise(tok)), loaded, true);
         }
         // Present on PATH but won't tell us a version. Installed, unknown.
         if out.status.success() {
-            return (None, true);
+            return (None, loaded, true);
         }
     }
     // 4. Shim present but unversioned still counts as installed.
     for p in ["/usr/local/lib/libgreenboost_cuda.so", "/usr/lib/libgreenboost_cuda.so"] {
         if std::path::Path::new(p).exists() {
-            return (None, true);
+            return (None, loaded, true);
         }
     }
-    (None, false)
+    (None, loaded, false)
 }
 
 // ── GitLab query ───────────────────────────────────────────────────────
@@ -248,12 +306,14 @@ fn fetch_latest_release(project: &str, web_url: &str) -> Result<Option<GlRelease
 
 fn check_component(
     key: &str, name: &str, project: &str, web_url: &str,
-    installed: Option<String>, present: bool,
+    installed: Option<String>, loaded: Option<String>, present: bool,
 ) -> ComponentUpdate {
     let mut c = ComponentUpdate {
         key: key.to_string(),
         name: name.to_string(),
         installed: installed.clone(),
+        loaded: loaded.clone(),
+        reload_needed: reload_needed(&installed, &loaded),
         release_url: web_url.to_string(),
         not_installed: !present,
         ..Default::default()
@@ -323,19 +383,42 @@ fn write_cache(r: &UpdateReport) {
 // ── Advice ─────────────────────────────────────────────────────────────
 
 fn build_advice(suite: &ComponentUpdate, core: &ComponentUpdate) -> String {
+    // These sentences sit next to an "Upgrade now" button per component, so
+    // they say what the button will do and in which order to press them ,
+    // not how to do it by hand in a terminal. The button runs each project's
+    // own installer, which is the same thing the old text asked the user to
+    // go and run.
+    // A core that's installed but not yet running is NOT an upgrade , the
+    // bytes are already on disk. Say what happened, what it costs, what is
+    // still fine, then the one command. Only when nothing else is pending:
+    // if an upgrade is queued its own installer reloads the module anyway.
+    if core.reload_needed && !core.update_available && !suite.update_available {
+        let installed = core.installed.clone().unwrap_or_default();
+        let running = core.loaded.clone().unwrap_or_default();
+        return format!(
+            "GreenBoost core {installed} is installed, but the kernel module still \
+             running is {running}. Nothing is broken , the loaded module keeps \
+             working exactly as before; you simply aren't getting anything that \
+             changed in {installed} yet. Reload it with `sudo greenboost load`, \
+             or reboot."
+        );
+    }
+
     match (suite.update_available, core.update_available) {
         (true, true) =>
-            "Update the Suite first (sudo ./install.sh in your checkout, after a \
-             git pull), then update GreenBoost core , a newer Suite can expect a \
-             newer core, since they share the same IOCTL interface.".to_string(),
+            "Upgrade the Suite first, then GreenBoost core , a newer Suite can \
+             expect a newer core, since they share the same IOCTL interface. \
+             Each button fetches that project's sources and runs its installer; \
+             both ask for administrator authorization.".to_string(),
         (true, false) =>
-            "A new GreenBoost Gaming Suite release is available. Pull the repo and \
-             re-run sudo ./install.sh , that also refreshes the Steam compatibility \
-             tool, which a manual build does not.".to_string(),
+            "A new GreenBoost Gaming Suite release is available. Upgrade now \
+             fetches it and re-runs the installer , which also refreshes the \
+             Steam compatibility tool, something a manual rebuild does not. \
+             Close and reopen the app afterwards to run the new version.".to_string(),
         (false, true) =>
-            "The Suite is current, but GreenBoost core has a newer release. Update \
-             it from its own repo, then reload the kernel module (sudo greenboost \
-             load) so the new module is actually the one running.".to_string(),
+            "The Suite is current, but GreenBoost core has a newer release. \
+             Upgrade now fetches it, runs its installer, and reloads the kernel \
+             module so the new build is the one actually running.".to_string(),
         (false, false) => String::new(),
     }
 }
@@ -357,8 +440,10 @@ pub fn check_updates_impl(force: bool) -> UpdateReport {
                 // under a cached result (the user just ran the installer),
                 // so re-derive them rather than serving a stale claim.
                 c.suite.installed = Some(installed_suite_version());
-                let (cv, present) = installed_core_version();
+                let (cv, loaded, present) = installed_core_version();
                 c.core.installed = cv;
+                c.core.loaded = loaded;
+                c.core.reload_needed = reload_needed(&c.core.installed, &c.core.loaded);
                 c.core.not_installed = !present;
                 c.suite.update_available = match (&c.suite.installed, &c.suite.latest) {
                     (Some(i), Some(l)) => is_newer(l, i),
@@ -376,12 +461,12 @@ pub fn check_updates_impl(force: bool) -> UpdateReport {
 
     let suite = check_component(
         "suite", "GreenBoost Gaming Suite", SUITE_PROJECT, SUITE_WEB,
-        Some(installed_suite_version()), true,
+        Some(installed_suite_version()), None, true,
     );
-    let (core_ver, core_present) = installed_core_version();
+    let (core_ver, core_loaded, core_present) = installed_core_version();
     let core = check_component(
         "core", "GreenBoost core", CORE_PROJECT, CORE_WEB,
-        core_ver, core_present,
+        core_ver, core_loaded, core_present,
     );
 
     let advice = build_advice(&suite, &core);
@@ -401,6 +486,28 @@ pub fn suite_version() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A build that is on disk but not running is a reload, never an
+    /// upgrade , and "we can't tell" is neither. This is the distinction the
+    /// 2026-08-20 incident turned into a bogus "Upgrade now" button.
+    #[test]
+    fn reload_needed_only_when_both_sides_known_and_differ() {
+        // (installed, loaded, expected, why)
+        const CASES: &[(Option<&str>, Option<&str>, bool, &str)] = &[
+            (Some("3.4"), Some("3.2"), true,  "new build installed, old module still resident"),
+            (Some("3.4"), Some("3.4"), false, "installed build is the one running"),
+            (Some("3.4"), None,        false, "module not loaded , nothing to compare"),
+            (None,        Some("3.4"), false, "no build stamp , not a drift claim"),
+            (None,        None,        false, "know nothing, say nothing"),
+        ];
+        for (inst, load, want, why) in CASES {
+            let got = reload_needed(
+                &inst.map(str::to_string),
+                &load.map(str::to_string),
+            );
+            assert_eq!(got, *want, "reload_needed({inst:?}, {load:?}) , {why}");
+        }
+    }
 
     /// Release tags arrive wearing decoration. Strip it, keep the number.
     #[test]

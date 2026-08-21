@@ -1,23 +1,65 @@
 // Copyright 2026 Ferran Duarri , GPL v2
 // GreenBoost Gaming Suite , polkit rule for passwordless NVML fan control.
 //
-// Allows any active local user to run the NVML fan helper (nvml_fan.py)
-// via pkexec without entering a password.  The helper is the only program
-// that benefits from this rule , it uses libnvidia-ml.so.1 to set fan
-// speeds, which requires root (nvmlDeviceSetFanSpeed_v2).
+// Allows an active local user to run the NVML fan helper (nvml_fan.py) via
+// pkexec without entering a password.  The helper uses libnvidia-ml.so.1 to
+// set fan speeds, which requires root (nvmlDeviceSetFanSpeed_v2).
 //
 // Install to: /etc/polkit-1/rules.d/60-greenboost-fan.rules
+//
+// SECURITY , why this matches the WHOLE command line, not a substring.
+//
+// The original rule authorised any pkexec of /usr/bin/python3 whose command
+// line merely *contained* the substring "nvml_fan.py":
+//
+//     (action.lookup("command_line") || "").indexOf("nvml_fan.py") >= 0
+//
+// That let any active local user run
+//     pkexec /usr/bin/python3 /tmp/anything.py nvml_fan.py
+// and execute arbitrary code as root , the substring test passed on an
+// argument the attacker controlled, while the script actually executed was
+// /tmp/anything.py.  A local privilege escalation, and one that survived
+// uninstalling the software, because the old uninstall path never removed
+// this file.
+//
+// The rule below instead requires the entire command line to match one exact
+// installed script path followed by the helper's own closed argument grammar
+// ("auto", or "set <0-100>").  Nothing else is authorised, so a future
+// argument added to nvml_fan.py cannot silently widen this grant either ,
+// the regex has to be updated deliberately.
 
 polkit.addRule(function(action, subject) {
-    if (action.id === "org.freedesktop.policykit.exec" &&
-        subject.local &&
-        subject.active &&
-        (
-            // Installed path
-            action.lookup("program") === "/usr/bin/python3" &&
-            (action.lookup("command_line") || "").indexOf("nvml_fan.py") >= 0
-        ))
-    {
-        return polkit.Result.YES;
+    if (action.id !== "org.freedesktop.policykit.exec") {
+        return;
+    }
+    if (!subject.local || !subject.active) {
+        return;
+    }
+
+    var prog = action.lookup("program") || "";
+    if (prog !== "/usr/bin/python3" && prog !== "/usr/bin/python3.13"
+        && prog !== "/bin/python3") {
+        return;
+    }
+
+    // Exactly the paths install.sh writes the helper to. Keep in sync with
+    // _NVML_FAN_CANDIDATES in gb_gaming/fan_daemon.py , the dev fallback
+    // (a path inside the source checkout) is deliberately NOT granted here.
+    var allowed = [
+        "/usr/local/lib/greenboost-gaming/gb_gaming/nvml_fan\\.py",
+        "/usr/lib/greenboost-gaming/gb_gaming/nvml_fan\\.py"
+    ];
+
+    // "set 0".."set 100", or "auto" , nvml_fan.py's entire accepted grammar.
+    var args = "(?:auto|set[ \\t]+(?:100|[0-9]{1,2}))";
+
+    var cmdline = action.lookup("command_line") || "";
+    for (var i = 0; i < allowed.length; i++) {
+        var re = new RegExp(
+            "^(?:/usr/bin/python3(?:\\.[0-9]+)?|/bin/python3|python3)" +
+            "[ \\t]+" + allowed[i] + "[ \\t]+" + args + "[ \\t]*$");
+        if (re.test(cmdline)) {
+            return polkit.Result.YES;
+        }
     }
 });

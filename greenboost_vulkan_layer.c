@@ -59,6 +59,12 @@
  * 0 = init failed → inflate_heaps() is a no-op. */
 static uint64_t g_gbvk_virtual_vram_bytes = 0;
 
+/* Headroom held back from the budget we report to games. See
+ * gbvk_reserved_budget() for the reasoning; tunable via
+ * GREENBOOST_VK_BUDGET_RESERVE_DIV / _MAX_MB. */
+static uint64_t g_gbvk_budget_reserve_div    = 8;      /* 1/8 = 12.5%      */
+static uint64_t g_gbvk_budget_reserve_max    = 1024ULL * 1024ULL * 1024ULL; /* 1 GiB cap */
+
 /* Minimum alloc size to attempt T2 DMA-BUF fallback (default: from env or 32 MB).
  * Lower than AI shim's 64 MB because games make many 32-64 MB texture allocs. */
 static uint64_t g_gbvk_overflow_min_bytes = 32ULL * 1024ULL * 1024ULL;
@@ -524,6 +530,24 @@ static void gbvk_init(void)
             g_gbvk_t3_min_bytes = (uint64_t)mb * 1024ULL * 1024ULL;
     }
 
+    /* Headroom held back from the budget reported to games. Both knobs
+     * accept 0: DIV=0 or MAX_MB=0 disables the reserve and restores the
+     * pre-2026-08-20 gross-capacity behaviour, which is the A/B escape
+     * hatch. Negative or unparseable values are ignored, not clamped ,
+     * a typo should leave the default in place, not silently pick 0. */
+    const char *rdiv_env = getenv("GREENBOOST_VK_BUDGET_RESERVE_DIV");
+    if (rdiv_env) {
+        long long d = atoll(rdiv_env);
+        if (d >= 0)
+            g_gbvk_budget_reserve_div = (uint64_t)d;
+    }
+    const char *rmax_env = getenv("GREENBOOST_VK_BUDGET_RESERVE_MAX_MB");
+    if (rmax_env) {
+        long long mb = atoll(rmax_env);
+        if (mb >= 0)
+            g_gbvk_budget_reserve_max = (uint64_t)mb * 1024ULL * 1024ULL;
+    }
+
     /* PSO compile thread count , read GREENBOOST_SHADER_THREADS; default nproc-2. */
     {
         const char *st_env = getenv("GREENBOOST_SHADER_THREADS");
@@ -940,6 +964,49 @@ static void inflate_heaps(VkPhysicalDeviceMemoryProperties *p)
     }
 }
 
+/* ── Helper: hold back headroom from a reported budget ───────────────── */
+/*
+ * Rule #1 keeps ~10% of physical VRAM free so the system never collapses
+ * under memory pressure. The same argument applies to the VIRTUAL pool we
+ * report to games, and nothing applied it: heapBudget[] was set to the gross
+ * T1+T2 capacity, so a game that allocates right up to what we told it drives
+ * the T2 pool to 100% with no margin at all. That matters most in exactly the
+ * case GreenBoost exists to handle , a served model already holding VRAM on
+ * the same card, which is what the gaming_inference_contention segment is for.
+ *
+ * A CAPPED FRACTION, not a flat percentage. A flat 10% of a 76 GB virtual
+ * pool would hold back 7.6 GB of DDR for no reason; the risk being hedged
+ * against does not grow with pool size the way a percentage does. So:
+ *
+ *     reserve = min(capacity / DIV, MAX)
+ *
+ * 12.5% capped at 1 GiB by default: a 12 GB card reserves 1 GiB, and a 76 GB
+ * virtual pool also reserves 1 GiB rather than 9.5 GB.
+ *
+ * Derived, never a literal , the inputs are the detected pool sizes, so this
+ * stays correct on hardware that is not this box.
+ *
+ * Set GREENBOOST_VK_BUDGET_RESERVE_MAX_MB=0 to disable entirely and get the
+ * previous gross-capacity behaviour back (A/B escape hatch).
+ */
+static uint64_t gbvk_reserved_budget(uint64_t capacity)
+{
+    if (!capacity || !g_gbvk_budget_reserve_max || !g_gbvk_budget_reserve_div)
+        return capacity;
+
+    uint64_t reserve = capacity / g_gbvk_budget_reserve_div;
+    if (reserve > g_gbvk_budget_reserve_max)
+        reserve = g_gbvk_budget_reserve_max;
+
+    /* Never report zero (or a uselessly tiny budget) on a small pool , a
+     * game that is told it has nothing behaves far worse than one told it
+     * has a little. Keep at least half of whatever we were given. */
+    if (reserve > capacity / 2)
+        reserve = capacity / 2;
+
+    return capacity - reserve;
+}
+
 /* ── Helper: inflate VK_EXT_memory_budget heapBudget[] ───────────────── */
 /*
  * DXVK and VKD3D-Proton query VK_EXT_memory_budget (heapBudget[]) to decide
@@ -947,7 +1014,13 @@ static void inflate_heaps(VkPhysicalDeviceMemoryProperties *p)
  * Without this, they see the real ~12 GB physical budget and cap textures there
  * despite the inflated heap size. We overwrite heapBudget[] for device-local
  * heaps to match g_gbvk_virtual_vram_bytes so the full T1+T2 pool is usable.
- * heapUsage[] is left unchanged (reflects real driver usage, keeps OOM sane).
+ * heapUsage[] is left unchanged (reflects real driver usage, keeps OOM sane)
+ * , a game computing free = budget - usage therefore still sees whatever
+ * other processes (a served model, the compositor) are really holding.
+ *
+ * The budget we write is the pool capacity MINUS headroom , see
+ * gbvk_reserved_budget(). Reporting the gross capacity, as this did before,
+ * invited a game to fill T2 to exactly 100%.
  */
 static void inflate_budget(VkPhysicalDeviceMemoryProperties2 *p)
 {
@@ -958,12 +1031,16 @@ static void inflate_budget(VkPhysicalDeviceMemoryProperties2 *p)
         if (chain->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT) {
             VkPhysicalDeviceMemoryBudgetPropertiesEXT *budget =
                 (VkPhysicalDeviceMemoryBudgetPropertiesEXT *)chain;
+            uint64_t reported = gbvk_reserved_budget(g_gbvk_virtual_vram_bytes);
             for (uint32_t i = 0; i < p->memoryProperties.memoryHeapCount; i++) {
                 if (p->memoryProperties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
-                    budget->heapBudget[i] = g_gbvk_virtual_vram_bytes;
+                    budget->heapBudget[i] = reported;
             }
-            gbvk_dbg("inflate_budget: set heapBudget[] = %llu GB for device-local heaps",
-                     (unsigned long long)(g_gbvk_virtual_vram_bytes >> 30));
+            gbvk_dbg("inflate_budget: heapBudget[] = %llu MB "
+                     "(pool %llu MB - %llu MB headroom) for device-local heaps",
+                     (unsigned long long)(reported >> 20),
+                     (unsigned long long)(g_gbvk_virtual_vram_bytes >> 20),
+                     (unsigned long long)((g_gbvk_virtual_vram_bytes - reported) >> 20));
             break;
         }
         chain = (VkBaseOutStructure *)chain->pNext;
@@ -3559,7 +3636,7 @@ static PFN_vkVoidFunction gbvk_GetDeviceProcAddr(VkDevice dev, const char *name)
 
 static PFN_vkVoidFunction gbvk_GetInstanceProcAddr(VkInstance inst, const char *name)
 {
-#define HOOK(fn)  if (strcmp(name, #fn) == 0) return (PFN_vkVoidFunction)gbvk_##fn
+#define HOOK(fn)  if (strcmp(name, "vk" #fn) == 0) return (PFN_vkVoidFunction)gbvk_##fn
     HOOK(GetInstanceProcAddr);
     HOOK(CreateInstance);
     HOOK(DestroyInstance);
@@ -3586,7 +3663,7 @@ static PFN_vkVoidFunction gbvk_GetInstanceProcAddr(VkInstance inst, const char *
 
 static PFN_vkVoidFunction gbvk_GetDeviceProcAddr(VkDevice dev, const char *name)
 {
-#define HOOK(fn)  if (strcmp(name, #fn) == 0) return (PFN_vkVoidFunction)gbvk_##fn
+#define HOOK(fn)  if (strcmp(name, "vk" #fn) == 0) return (PFN_vkVoidFunction)gbvk_##fn
     HOOK(GetDeviceProcAddr);
     HOOK(DestroyDevice);
     HOOK(AllocateMemory);

@@ -20,6 +20,8 @@ mod live_stats;
 mod nvidia_diag;
 mod directstorage;
 mod updates;
+mod nonsteam;
+mod game_lifecycle;
 
 use crate::scanner::{Game, HiddenGame, scan_games};
 use crate::optimizer::{SettingGroup, scan_game_settings, apply_optimization, revert_optimization, set_game_setting_impl};
@@ -52,6 +54,7 @@ use crate::manager::{
     install_proton_streaming          as backend_install_proton_streaming,
     uninstall_proton_streaming        as backend_uninstall_proton_streaming,
     install_greenboost_module_streaming as backend_install_module_streaming,
+    upgrade_suite_streaming           as backend_upgrade_suite_streaming,
     launch_game_ext                   as backend_launch_game_ext,
     set_hdr_enabled as backend_set_hdr_enabled,
     SessionRecord, get_session_history_impl as backend_get_session_history,
@@ -250,11 +253,64 @@ fn install_proton() -> Result<String, String> {
     install_greenboost_proton()
 }
 
+/// Launch a game. **async on purpose** , see the body.
 #[tauri::command]
-fn launch_game(appid: String, disable_secondary_displays: Option<bool>)
+async fn launch_game(appid: String, disable_secondary_displays: Option<bool>)
     -> Result<String, String>
 {
-    backend_launch_game_ext(&appid, disable_secondary_displays.unwrap_or(false))
+    // Runs on a blocking worker, never on the webview's command thread.
+    //
+    // The body waits on real things: up to 20 s for Steam to come up when it
+    // starts it with -silent, plus process spawns. A synchronous #[command]
+    // does that work on the thread the UI is driven from, so any stall there
+    // is indistinguishable from a crash , on 2026-08-21 a blocking wait on
+    // `steam -applaunch` froze the Suite hard enough that the desktop offered
+    // "Force Quit", and no launch status ever reached the Games view because
+    // the function never returned to publish one. The deadlock itself is
+    // fixed in launch_game_ext; this keeps a future slow path from ever
+    // costing the UI again.
+    let out = tauri::async_runtime::spawn_blocking(move || {
+        let r = backend_launch_game_ext(&appid, disable_secondary_displays.unwrap_or(false));
+        // Steam hands back no process handle, so the appid is the only thread
+        // we have back to this game when the user asks us to stop it.
+        if r.is_ok() { crate::game_lifecycle::note_launch(&appid); }
+        r
+    })
+    .await
+    .map_err(|e| format!("launch task did not run: {e}"))?;
+    out
+}
+
+/// How the last launch is going , poll this after `launch_game` returns.
+///
+/// `launch_game` can only report that Steam accepted the request; whether a
+/// game actually starts is decided seconds later, by Proton, in another
+/// process tree. Polling this is what lets the Games view say "running" or
+/// "it died, here is why" instead of an optimistic sentence written before
+/// either was known.
+/// Proton installs the wrapper can be pointed at , `[name, path]` pairs for
+/// the Upstream Proton picker.
+#[tauri::command]
+fn list_proton_installs() -> Vec<(String, String)> {
+    crate::manager::list_proton_installs()
+}
+
+#[tauri::command]
+fn get_launch_status() -> crate::game_lifecycle::LaunchStatus {
+    crate::game_lifecycle::launch_status()
+}
+
+/// Stop the running game , the tray's "Stop game", and the Quit path when
+/// `stop_game_on_quit` is set. `appid` defaults to whatever this Suite
+/// launched; passing one explicitly targets that prefix.
+#[tauri::command]
+fn stop_game(appid: Option<String>) -> Result<crate::game_lifecycle::StopReport, String> {
+    crate::game_lifecycle::stop_game_impl(appid, 5.0)
+}
+
+#[tauri::command]
+fn game_session_active() -> bool {
+    crate::game_lifecycle::has_live_session()
 }
 
 #[tauri::command]
@@ -289,6 +345,21 @@ async fn uninstall_proton_streaming(channel: Channel<String>) -> Result<i32, Str
 #[tauri::command]
 async fn install_module_streaming(channel: Channel<String>) -> Result<i32, String> {
     backend_install_module_streaming(channel)
+}
+
+/// Upgrade GreenBoost core: pull its repo, run its installer, reload the
+/// kernel module. Same command whether core is missing or merely out of
+/// date , the installer is idempotent, and the Updates card and the
+/// "Install kernel module" button both land here.
+#[tauri::command]
+async fn upgrade_core_streaming(channel: Channel<String>) -> Result<i32, String> {
+    backend_install_module_streaming(channel)
+}
+
+/// Upgrade the Gaming Suite itself: pull this repo, re-run its install.sh.
+#[tauri::command]
+async fn upgrade_suite_streaming(channel: Channel<String>) -> Result<i32, String> {
+    backend_upgrade_suite_streaming(channel)
 }
 
 // PR-VVV: streaming DLSS update / restore.  The React InstallStreamModal
@@ -690,6 +761,109 @@ fn save_game_overrides(appid: String, overrides: GameOverrides) -> Result<(), St
     backend_save_game_overrides(&appid, &overrides)
 }
 
+// ── System tray ───────────────────────────────────────────────────────
+//
+// Closing the window used to exit the process outright. That is the wrong
+// default for a suite whose whole job is to supervise a running game: the
+// game kept running with nothing left watching it, and gaming_mode stayed
+// pinned. The tray keeps the supervisor alive and, with it, a way to stop
+// the game.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Whether a tray icon actually exists. If the desktop has no StatusNotifier
+/// host (or libayatana-appindicator is missing), hiding the window would
+/// strand the user with no way back , so we fall back to quitting.
+static TRAY_READY: AtomicBool = AtomicBool::new(false);
+
+fn close_hides_to_tray() -> bool {
+    if !TRAY_READY.load(Ordering::Relaxed) {
+        return false;
+    }
+    crate::global_settings::get_impl()
+        .map(|s| s.close_action != "quit")
+        .unwrap_or(true)
+}
+
+/// Stop the game on the way out, when the user asked for Steam-like
+/// behaviour. Best-effort: a failure here must never block the exit.
+fn stop_game_if_configured() {
+    let wants_stop = crate::global_settings::get_impl()
+        .map(|s| s.stop_game_on_quit)
+        .unwrap_or(true);
+    if !wants_stop {
+        return;
+    }
+    std::env::set_var("GB_STOP_REASON", "suite_quit");
+    match crate::game_lifecycle::stop_game_impl(None, 5.0) {
+        Ok(r)  => eprintln!("[greenboost-gaming] {}", r.summary()),
+        Err(e) => eprintln!("[greenboost-gaming] could not stop the game ({e}) \
+                             , it keeps running; nothing else is affected."),
+    }
+}
+
+fn show_main_window(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
+fn build_tray(app: &tauri::AppHandle) {
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+    let build = || -> tauri::Result<()> {
+        let show = MenuItem::with_id(app, "show", "Show GreenBoost", true, None::<&str>)?;
+        let stop = MenuItem::with_id(app, "stop", "Stop game", true, None::<&str>)?;
+        let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+        let menu = Menu::with_items(app, &[&show, &stop, &quit])?;
+
+        let mut builder = TrayIconBuilder::with_id("greenboost-tray")
+            .tooltip("GreenBoost Gaming Suite")
+            .menu(&menu)
+            .show_menu_on_left_click(false)
+            .on_menu_event(|app, event| match event.id.as_ref() {
+                "show" => show_main_window(app),
+                "stop" => {
+                    std::env::set_var("GB_STOP_REASON", "tray_stop");
+                    match crate::game_lifecycle::stop_game_impl(None, 5.0) {
+                        Ok(r)  => eprintln!("[greenboost-gaming] {}", r.summary()),
+                        Err(e) => eprintln!("[greenboost-gaming] stop failed: {e}"),
+                    }
+                }
+                "quit" => {
+                    stop_game_if_configured();
+                    app.exit(0);
+                }
+                _ => {}
+            })
+            .on_tray_icon_event(|tray, event| {
+                if let TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up, ..
+                } = event {
+                    show_main_window(tray.app_handle());
+                }
+            });
+        if let Some(icon) = app.default_window_icon() {
+            builder = builder.icon(icon.clone());
+        }
+        builder.build(app)?;
+        Ok(())
+    };
+
+    match build() {
+        Ok(()) => TRAY_READY.store(true, Ordering::Relaxed),
+        Err(e) => eprintln!(
+            "[greenboost-gaming] no system tray available ({e}) , closing the \
+             window will quit the Suite as before. Nothing else changes; \
+             install libayatana-appindicator3 to get the tray back."),
+    }
+}
+
 fn main() {
     // Re-apply persisted performance mode before the window opens.
     if let Ok(settings) = crate::global_settings::get_impl() {
@@ -698,8 +872,50 @@ fn main() {
         }
     }
 
+    // A session that died hard leaves a stale record behind , and the same
+    // crash leaves greenboost.ko's gaming_mode at 1, which parks inference
+    // T2 buffers at the LRU tail until something notices. Clean up on the
+    // way in, so the next launch starts from a known state.
+    let pruned = crate::game_lifecycle::prune_stale_sessions();
+    if pruned > 0 {
+        eprintln!("[greenboost-gaming] cleared {pruned} stale game session(s) \
+                   left by a previous crash");
+    }
+    // A crash also leaves the CPU governor pinned, a GPU power limit applied
+    // and gaming_mode at 1 , the last of which quietly costs inference
+    // throughput until something clears it. Put it back on the way in.
+    let (restored, needs_root) = crate::game_lifecycle::restore_stale_power();
+    if restored > 0 {
+        eprintln!("[greenboost-gaming] restored power settings left by \
+                   {restored} crashed session(s)");
+    }
+    if needs_root > 0 {
+        eprintln!("[greenboost-gaming] {needs_root} crashed session(s) left \
+                   settings that need root to restore , run: sudo sh \
+                   ~/.local/state/greenboost-gaming/power-restore-*.sh");
+    }
+
     tauri::Builder::default()
+        .setup(|app| {
+            build_tray(app.handle());
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if close_hides_to_tray() {
+                    // Keep running in the tray. Steam behaves this way, and
+                    // a running game outlives a closed window either way ,
+                    // this at least leaves the user a way to stop it.
+                    api.prevent_close();
+                    let _ = window.hide();
+                } else {
+                    stop_game_if_configured();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
+            get_launch_status,
+            list_proton_installs,
             check_updates,
             get_suite_version,
             get_games,
@@ -736,6 +952,8 @@ fn main() {
             install_proton_streaming,
             uninstall_proton_streaming,
             install_module_streaming,
+            upgrade_core_streaming,
+            upgrade_suite_streaming,
             update_dlss_streaming,
             restore_dlss_streaming,
             restore_dlss_to_original_streaming,
@@ -795,6 +1013,8 @@ fn main() {
             save_game_overrides,
             get_session_history,
             analyze_game_sessions,
+            stop_game,
+            game_session_active,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -19,6 +19,8 @@ const GS_FIELD_LABEL: Partial<Record<keyof GlobalSettingsState, string>> = {
   wayland:            "Wayland",
   hdr:                "HDR (High Dynamic Range)",
   auto_disable_secondary_on_launch: "Cinema mode on launch",
+  steam_silent_launch: "Keep Steam out of the way",
+  proton_upstream:    "Upstream Proton",
   vk_pipeline_cache:  "Remember compiled shaders",
   vk_queue_priority:  "Give the game GPU priority",
   vk_memory_priority: "Protect game memory under pressure",

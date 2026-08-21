@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { loadGlobalSettings, patchGlobalSettings } from "../store/globalSettings";
 import type { CachedDll } from "../types";
 import { UpdateBanner } from "../components/UpdateBanner";
+import { InstallStreamModal } from "../components/InstallStreamModal";
+import type { InstallStreamProps } from "../types";
 
 const DISCLAIMER = "GreenBoost is an independent open-source project and is not affiliated with, endorsed by, or sponsored by NVIDIA Corporation. NVIDIA, CUDA, GeForce, and RTX are trademarks of NVIDIA Corporation.";
 
@@ -43,6 +45,9 @@ export function AboutView() {
   const [perfMode, setPerfMode] = useState(false);
   const [perfMsg, setPerfMsg]   = useState<string | null>(null);
   const [tab, setTab] = useState<"about" | "preferences">("about");
+  // About is the page you open on purpose to ask "am I current?", so the
+  // answer has to come with the action, same as on Status.
+  const [updateModal, setUpdateModal] = useState<null | InstallStreamProps>(null);
 
   const [cachedDlls, setCachedDlls] = useState<CachedDll[]>([]);
   const [dlssLoading, setDlssLoading] = useState(false);
@@ -129,7 +134,28 @@ export function AboutView() {
                 </div>
               </div>
 
-              <UpdateBanner />
+              <UpdateBanner onUpgrade={(key) => setUpdateModal(
+                key === "core"
+                  ? {
+                      title:   "Upgrade GreenBoost core",
+                      command: "upgrade_core_streaming",
+                      confirm: "Pull the latest GreenBoost core sources, run its "
+                             + "installer, and reload the kernel module so the new "
+                             + "build is the one running? This needs administrator "
+                             + "authorization and takes a few minutes.",
+                      onDone:  () => setUpdateModal(null),
+                    }
+                  : {
+                      title:   "Upgrade GreenBoost Gaming Suite",
+                      command: "upgrade_suite_streaming",
+                      confirm: "Pull the latest Gaming Suite sources and re-run "
+                             + "install.sh? This rebuilds the app and can take "
+                             + "several minutes. You'll need to close and reopen "
+                             + "the app afterwards to run the new version.",
+                      onDone:  () => setUpdateModal(null),
+                    }
+              )} />
+              {updateModal && <InstallStreamModal {...updateModal} />}
 
               <p className="section-title" style={{ marginTop: 24 }}>
                 DLSS DLL provenance
