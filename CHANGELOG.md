@@ -2,6 +2,34 @@
 
 ---
 
+## 2026-08-21 , the boot-image exclusion was installed for the wrong tool
+
+The Suite installs a tmpfiles rule that group-scopes `gaming_mode` so Proton can
+write it as your user. That rule has no business in the initramfs , it acts on
+`/sys/module/greenboost/`, which cannot exist before the module loads , and the
+installer already shipped an exclusion to keep it out.
+
+It shipped that exclusion as an initramfs-tools hook, chosen by checking whether
+`/etc/initramfs-tools/hooks/` exists. On Ubuntu 26.04 that directory exists
+while **dracut** builds your initramfs, so the hook was never run and the rule
+kept shipping, failing on every boot:
+
+    systemd-tmpfiles: /etc/tmpfiles.d/greenboost-gaming.conf:14:
+        Failed to resolve group 'greenboost': Unknown group
+
+Nothing was broken by it , the real-root pass a few seconds later succeeds and
+`gaming_mode` ends up correctly owned. It is noise, and noise that teaches you
+to skip past GreenBoost lines in your boot log.
+
+The installer now identifies the generator properly (the initramfs-tools
+*meta*-package, or `kernel-install`'s dracut drop-in), ships the exclusion for
+every generator present, and regenerates with the right one. dracut needs a
+module rather than a config line, because `omit_drivers` omits kernel modules
+and this is a tmpfiles fragment. The uninstall path removes all of it and
+regenerates again.
+
+---
+
 ## 2026-08-20 , closing the Suite no longer abandons the game
 
 Three related gaps, all of them the same missing idea: the Suite launched
@@ -19,7 +47,7 @@ What that cost, without announcing itself: CPUs stuck at performance (fans up,
 idle power up), a power limit matching nothing, and , the expensive one ,
 `gaming_mode` stuck at 1, which parks every inference buffer in system RAM at
 the eviction queue's tail and makes the shim keep doubling its KV reserve. It
-read as "the box got slower".
+read as "the workstation got slower".
 
 The baseline now survives the process. Before the first write, every value is
 captured to `~/.local/state/greenboost-gaming/` as JSON **and** as a plain `sh`

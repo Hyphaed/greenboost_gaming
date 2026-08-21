@@ -36,6 +36,45 @@ step()    { printf "%s==>%s %s\n"        "$C_CYA" "$C_OFF" "$*"; }
 ok()      { printf "%s ✓%s %s\n"         "$C_GRN" "$C_OFF" "$*"; }
 warn()    { printf "%s ⚠%s %s\n"         "$C_YEL" "$C_OFF" "$*" >&2; }
 fail()    { printf "%s ✗%s %s\n"         "$C_RED" "$C_OFF" "$*" >&2; exit 1; }
+
+# Which tool actually builds this machine's boot image?
+#
+# Do NOT answer this by testing for a directory or a binary. On Ubuntu 26.04
+# `initramfs-tools-core` ships /etc/initramfs-tools/hooks/ AND
+# /usr/sbin/update-initramfs while dracut is the generator , so both tests pick
+# the wrong one, the exclusion lands where nothing reads it, and the boot image
+# keeps failing on the tmpfiles rule every boot (incident 2026-08-21). Only the
+# initramfs-tools META-package wires that generator into the kernel postinst,
+# and kernel-install hands the job to dracut when 50-dracut.install is present.
+#
+# Kept byte-compatible with greenboost_setup.sh::gb_initramfs_generator , one
+# rule, two entry points. Echoes: dracut | initramfs-tools | mkinitcpio | unknown
+gb_initramfs_generator() {
+    [[ -n "${_GB_INITRAMFS_GEN:-}" ]] && { printf '%s' "$_GB_INITRAMFS_GEN"; return 0; }
+
+    local gen="unknown" _it_meta=0 _dracut_ki=0
+
+    if command -v dpkg-query >/dev/null 2>&1; then
+        dpkg-query -W -f='${db:Status-Status}' initramfs-tools 2>/dev/null \
+            | grep -q '^installed$' && _it_meta=1
+    elif command -v update-initramfs >/dev/null 2>&1; then
+        _it_meta=1
+    fi
+
+    [[ -x /usr/lib/kernel/install.d/50-dracut.install || \
+       -x /etc/kernel/install.d/50-dracut.install ]] && _dracut_ki=1
+
+    if command -v dracut >/dev/null 2>&1 && { [[ $_dracut_ki -eq 1 ]] || [[ $_it_meta -eq 0 ]]; }; then
+        gen="dracut"
+    elif [[ $_it_meta -eq 1 ]] && command -v update-initramfs >/dev/null 2>&1; then
+        gen="initramfs-tools"
+    elif command -v mkinitcpio >/dev/null 2>&1; then
+        gen="mkinitcpio"
+    fi
+
+    _GB_INITRAMFS_GEN="$gen"
+    printf '%s' "$gen"
+}
 # err() prints one plain line to stderr without a glyph or an exit , used to
 # build the multi-line "what happened / what it costs / what still works /
 # the one command that fixes it" explanations that precede a fail().
@@ -92,6 +131,16 @@ TMPFILES_DST="${DESTDIR}/etc/tmpfiles.d/greenboost-gaming.conf"
 # its /etc/group). GreenBoost core ships a broader exclusion hook; this one
 # covers a Gaming-Suite-only install, where that hook is not present.
 INITRAMFS_HOOK_DST="${DESTDIR}/etc/initramfs-tools/hooks/zz-greenboost-gaming-exclude"
+# Same exclusion for the OTHER generator. dracut never reads an
+# initramfs-tools hook, and on Ubuntu 26.04 dracut is the one that builds
+# the image while initramfs-tools-core still ships the hook directory , so
+# testing for that directory picked the wrong generator and this rule kept
+# shipping in the boot image (incident 2026-08-21). Note omit_drivers is no
+# help here: it omits kernel modules, and this is a tmpfiles fragment, so it
+# takes a dracut module that deletes the file from $initdir after 00systemd
+# has copied /etc/tmpfiles.d in wholesale.
+DRACUT_MODULE_DST="${DESTDIR}/usr/lib/dracut/modules.d/99greenboost-gaming-exclude"
+DRACUT_CONF_DST="${DESTDIR}/etc/dracut.conf.d/99-greenboost-gaming-exclude.conf"
 PROFILES_DST="${DESTDIR}/usr/share/greenboost-gaming/profiles/per-game"
 GB_GROUP="greenboost"
 APP_NAME="greenboost-gaming"
@@ -478,10 +527,17 @@ if [[ "$MODE" == "uninstall" ]]; then
            "$ICON_FALLBACK_DIR/$APP_NAME.png" \
            "$UDEV_RULE_DST" \
            "$TMPFILES_DST" \
-           "$INITRAMFS_HOOK_DST" 2>/dev/null || true
-    # The hook is gone; rebuild so the image matches a never-installed machine.
-    if [[ -z "$DESTDIR" ]] && command -v update-initramfs >/dev/null 2>&1; then
-        update-initramfs -u -k all >/dev/null 2>&1 || true
+           "$INITRAMFS_HOOK_DST" \
+           "$DRACUT_CONF_DST" 2>/dev/null || true
+    rm -rfv "$DRACUT_MODULE_DST" 2>/dev/null || true
+    # The exclusions are gone; rebuild so the image matches a never-installed
+    # machine. Use whichever generator actually owns the image.
+    if [[ -z "$DESTDIR" ]]; then
+        case "$(gb_initramfs_generator)" in
+            dracut)          dracut --force --regenerate-all >/dev/null 2>&1 || true ;;
+            initramfs-tools) update-initramfs -u -k all      >/dev/null 2>&1 || true ;;
+            mkinitcpio)      mkinitcpio -P                   >/dev/null 2>&1 || true ;;
+        esac
     fi
     rm -rfv "$APP_LIB_DIR" 2>/dev/null || true
 
@@ -938,6 +994,14 @@ else
 fi
 
 # Initramfs exclusion for the rule we just installed (see INITRAMFS_HOOK_DST).
+#
+# Installed for EVERY generator whose tooling is present, not just the active
+# one: each is inert under the other, and a machine that later switches (or
+# that we mis-detect) still boots a clean image. The uninstall block removes
+# all of them.
+_gb_gen="$(gb_initramfs_generator)"
+_gb_excl=0
+
 if [[ -d "${DESTDIR}/etc/initramfs-tools/hooks" ]] || [[ -d "${DESTDIR}/etc/initramfs-tools" ]]; then
     install -d "$(dirname "$INITRAMFS_HOOK_DST")"
     cat > "$INITRAMFS_HOOK_DST" <<'HOOKEOF'
@@ -957,12 +1021,65 @@ rm -f "$DESTDIR"/etc/tmpfiles.d/greenboost-gaming.conf \
 exit 0
 HOOKEOF
     chmod 0755 "$INITRAMFS_HOOK_DST"
-    ok "initramfs exclusion installed , the tmpfiles rule stays out of the boot image"
-    if [[ -z "$DESTDIR" ]] && command -v update-initramfs >/dev/null 2>&1; then
-        update-initramfs -u -k all >/dev/null 2>&1 \
-            && ok "initramfs regenerated" \
-            || warn "update-initramfs failed , run: sudo update-initramfs -u -k all"
+    ok "initramfs-tools exclusion installed: ${INITRAMFS_HOOK_DST#$DESTDIR}"
+    _gb_excl=1
+fi
+
+if command -v dracut >/dev/null 2>&1 || [[ -d "${DESTDIR}/etc/dracut.conf.d" ]]; then
+    install -d "$DRACUT_MODULE_DST"
+    cat > "$DRACUT_MODULE_DST/module-setup.sh" <<'DRACUTEOF'
+#!/bin/bash
+# Installed by greenboost_gaming/install.sh , see DRACUT_MODULE_DST there.
+#
+# dracut's 00systemd module copies /etc/tmpfiles.d into the image wholesale, so
+# omit_drivers cannot keep this fragment out , only deleting it from $initdir
+# after that copy can. The 99 prefix is what puts this after 00systemd.
+#
+# The rule chmods /sys/module/greenboost/parameters/gaming_mode, which cannot
+# exist before the module is loaded, so it has nothing to do that early anyway;
+# all it did in the boot image was fail to resolve a group the initrd's own
+# /etc/group does not contain.
+check()   { return 0; }
+depends() { echo systemd; return 0; }
+install() {
+    rm -f "$initdir"/etc/tmpfiles.d/greenboost-gaming.conf \
+          "$initdir"/usr/lib/tmpfiles.d/greenboost-gaming.conf 2>/dev/null
+    return 0
+}
+DRACUTEOF
+    chmod 0755 "$DRACUT_MODULE_DST/module-setup.sh"
+    install -d "$(dirname "$DRACUT_CONF_DST")"
+    printf 'add_dracutmodules+=" greenboost-gaming-exclude "\n' > "$DRACUT_CONF_DST"
+    ok "dracut exclusion installed: ${DRACUT_MODULE_DST#$DESTDIR}"
+    _gb_excl=1
+fi
+
+if (( _gb_excl )); then
+    printf "%s   active initramfs generator: %s%s\n" "$C_DIM" "$_gb_gen" "$C_OFF"
+    if [[ -z "$DESTDIR" ]]; then
+        case "$_gb_gen" in
+            dracut)
+                dracut --force --regenerate-all >/dev/null 2>&1 \
+                    && ok "initramfs regenerated (dracut)" \
+                    || warn "dracut failed , run: sudo dracut --force --regenerate-all"
+                ;;
+            initramfs-tools)
+                update-initramfs -u -k all >/dev/null 2>&1 \
+                    && ok "initramfs regenerated (initramfs-tools)" \
+                    || warn "update-initramfs failed , run: sudo update-initramfs -u -k all"
+                ;;
+            mkinitcpio)
+                mkinitcpio -P >/dev/null 2>&1 \
+                    && ok "initramfs regenerated (mkinitcpio)" \
+                    || warn "mkinitcpio failed , run: sudo mkinitcpio -P"
+                ;;
+            *)
+                warn "unknown initramfs generator , regenerate your boot image manually"
+                ;;
+        esac
     fi
+else
+    warn "no initramfs generator found , the tmpfiles rule may ship in your boot image"
 fi
 
 # Apply both immediately so this takes effect without a reboot.
