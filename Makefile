@@ -8,13 +8,13 @@ NIS_SRC   := $(CURDIR)/../NVIDIAImageScaling/NIS/NIS_Main.glsl
 VULKAN_SDK_INCLUDES := $(if $(VULKAN_SDK),$(VULKAN_SDK)/include,\
   $(shell pkg-config --variable=includedir vulkan 2>/dev/null || echo /usr/include))
 
-.PHONY: vulkan gl nis-shaders install uninstall clean
+.PHONY: vulkan gl nis-shaders hud-shader install uninstall clean
 
-vulkan: nis-shaders greenboost_vulkan_layer.c nis_blobs.S greenboost_ioctl.h
+vulkan: nis-shaders hud-shader greenboost_vulkan_layer.c nis_blobs.S hud_blobs.S greenboost_ioctl.h gb_hud_font.h
 	gcc -shared -fPIC -O3 -fvisibility=hidden \
 	  -I$(VULKAN_SDK_INCLUDES) \
 	  -o libVkLayer_greenboost.so \
-	  greenboost_vulkan_layer.c nis_blobs.S \
+	  greenboost_vulkan_layer.c nis_blobs.S hud_blobs.S \
 	  -lpthread
 	@echo "[GreenBoost] Built libVkLayer_greenboost.so"
 
@@ -58,3 +58,13 @@ uninstall:
 
 clean:
 	rm -f libVkLayer_greenboost.so libgb_gl.so build/*.spv
+
+# ── GreenBoost overlay ────────────────────────────────────────────────
+# The font header is checked in; regenerate it with tools/gen_hud_font.py
+# only when the source face or cell size changes (needs Pillow).
+hud-shader: build/gb_hud.spv
+
+build/gb_hud.spv: shaders/gb_hud.comp | build
+	$(if $(NIS_GLSLC),,$(error glslc not found , install shaderc to build the overlay shader))
+	$(NIS_GLSLC) -O -fshader-stage=compute $< -o $@
+	@echo "[GreenBoost] Compiled overlay shader -> $@"

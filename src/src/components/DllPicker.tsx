@@ -15,10 +15,11 @@ const BACKUP_PREFIX = "__backup__:";
 
 export function DllPicker({
   game, onApplied, refreshTrigger,
-  dlssStatus, scanningDlss, onScanDlssStatus, onRestoreToShipped,
+  dlssStatus, scanningDlss, scanError, onScanDlssStatus, onRestoreToShipped,
 }: {
   game: Game; onApplied: () => void; refreshTrigger?: number;
   dlssStatus?: DlssStatus | null; scanningDlss?: boolean;
+  scanError?: string | null;
   onScanDlssStatus?: () => void; onRestoreToShipped?: () => void;
 }) {
   const [cache, setCache] = useState<CachedDll[]>([]);
@@ -40,20 +41,6 @@ export function DllPicker({
     // just actually installed rather than a stale earlier manual choice.
     setPicked({});
   }, [refreshTrigger]);
-
-  // Both the "Shipped: vX" and "Backup: vX (<date>)" options depend on
-  // dlssStatus, which used to only populate after the user clicked "Scan
-  // for updates" , so a game with a perfectly good .gdlss_original or
-  // backup sitting on disk showed neither option until that extra click.
-  // Fire the scan automatically once per selected game instead; Games.tsx
-  // already resets dlssStatus to null on every game switch, so this only
-  // re-fires when there's actually nothing to show yet.
-  useEffect(() => {
-    if (!dlssStatus && !scanningDlss && onScanDlssStatus) {
-      onScanDlssStatus();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game.path]);
 
   const apply = async (dllName: string, version: string) => {
     setBusy(dllName);
@@ -85,7 +72,11 @@ export function DllPicker({
           <span style={{ fontSize: 11, color: "#8a9ab0" }}>
             {dlssStatus
               ? `Checked ${new Date(dlssStatus.scanned_at * 1000).toLocaleTimeString()} · ${dlssStatus.out_of_date} of ${dlssStatus.scanned} out of date`
-              : "Not checked for updates yet"}
+              : scanningDlss
+                ? "Checking installed versions…"
+                : scanError
+                  ? `Could not read the installed versions: ${scanError}`
+                  : "Not checked for updates yet"}
           </span>
           <div style={{ display: "flex", gap: 6 }}>
             {onScanDlssStatus && (

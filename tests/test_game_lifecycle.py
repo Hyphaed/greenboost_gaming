@@ -122,3 +122,77 @@ def test_stop_game_reports_none_when_nothing_runs(monkeypatch):
 
 def test_set_child_subreaper_succeeds_on_linux():
     assert gl.set_child_subreaper() is True
+
+
+# ── the reaper ────────────────────────────────────────────────────────
+#
+# `install_reaper` sets a process-wide SIGCHLD handler and wraps
+# subprocess.Popen, so it can only be tested in a child interpreter , doing
+# it here would leave pytest itself reaping its own workers' children.
+
+REAPER_PRELUDE = f"""
+import os, subprocess, sys, time
+sys.path.insert(0, {str(Path(__file__).resolve().parent.parent)!r})
+from gb_gaming import game_lifecycle as gl
+assert gl.set_child_subreaper()
+assert gl.install_reaper()
+"""
+
+
+def _run_child(body: str) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, "-c", REAPER_PRELUDE + body],
+                          capture_output=True, text=True, timeout=60)
+
+
+def _zombie_probe() -> str:
+    return """
+kids = gl.child_pids(os.getpid())
+z = []
+for k in kids:
+    try:
+        st = open("/proc/%d/stat" % k).read()
+    except OSError:
+        continue
+    if st[st.rfind(")") + 2:].split()[0] == "Z":
+        z.append(k)
+print("ZOMBIES=%d" % len(z))
+"""
+
+
+def test_adopted_orphans_are_reaped():
+    """A subreaper that does not reap is a bug, not a half-measure.
+
+    Confirmed live 2026-08-21: the Proton wrapper had adopted wineboot.exe,
+    wine64-preloader and a python3, all sitting `<defunct>` under it for the
+    whole session, because nothing ever called waitpid on an adopted orphan.
+    """
+    out = _run_child(
+        'subprocess.Popen(["sh", "-c", "( sleep 0.3; exit 0 ) & exit 0"]).wait()\n'
+        'time.sleep(1.5)\n' + _zombie_probe())
+    assert out.returncode == 0, out.stderr
+    assert "ZOMBIES=0" in out.stdout, out.stdout
+
+
+def test_the_launch_we_wait_on_keeps_its_exit_status():
+    """The reaper must never touch a process we started ourselves.
+
+    Reaping the game out from under `subprocess.run` makes Popen.wait raise
+    ChildProcessError, which CPython turns into returncode 0 , a crashed game
+    would be recorded as a clean exit in the session summary.
+    """
+    out = _run_child(
+        'print("RC=%d" % subprocess.run(["sh", "-c", "exit 7"]).returncode)\n'
+        'print("RC2=%d" % subprocess.run(["sh", "-c", "sleep 0.2; exit 3"]).returncode)\n')
+    assert out.returncode == 0, out.stderr
+    assert "RC=7" in out.stdout and "RC2=3" in out.stdout, out.stdout
+
+
+def test_protected_pids_do_not_accumulate():
+    """Pid reuse must not let a stale entry protect a stranger , the set is
+    pruned to whatever is still actually our child."""
+    out = _run_child(
+        'for _ in range(20): subprocess.run(["true"])\n'
+        'print("TRACKED=%d" % len(gl._PROTECTED_PIDS))\n')
+    assert out.returncode == 0, out.stderr
+    tracked = int(out.stdout.split("TRACKED=")[1].split()[0])
+    assert tracked <= 2, out.stdout

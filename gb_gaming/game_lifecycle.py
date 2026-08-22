@@ -87,6 +87,88 @@ def set_child_subreaper() -> bool:
         return False
 
 
+# ── reaping what the subreaper adopts ─────────────────────────────────
+#
+# A subreaper that does not reap is a bug, not a half-measure. Confirmed live
+# 2026-08-21: the Proton wrapper had adopted `wineboot.exe`, `wine64-preloader`
+# and a `python3`, all sitting as `<defunct>` under it, because nothing ever
+# called waitpid on an adopted orphan. Zombies hold a pid and a slot in the
+# kernel's child list for the whole session, and they change what a wait on
+# that tree does , which is not a state to leave a game launch in.
+#
+# The rule: reap ONLY processes this one adopted. Anything it deliberately
+# spawned belongs to the code that spawned it , stealing the exit status of
+# `subprocess.run(<the game>)` would report a crash as a clean rc=0.
+_PROTECTED_PIDS: set[int] = set()
+_reaper_installed = False
+
+
+def protect_child(pid: int) -> None:
+    """Never reap `pid` , its exit status belongs to whoever spawned it."""
+    try:
+        _PROTECTED_PIDS.add(int(pid))
+    except (TypeError, ValueError):
+        pass
+
+
+def _reap_orphans(_signum=None, _frame=None) -> None:
+    """Reap every adopted child that has exited. Never raises."""
+    try:
+        kids = set(child_pids(os.getpid()))
+    except Exception:
+        return
+    # A protected pid stays protected only while it is still our child. Once
+    # its own spawner has reaped it, it leaves the list and the entry goes
+    # too , which is also what keeps pid reuse from protecting a stranger.
+    _PROTECTED_PIDS.intersection_update(kids)
+    for pid in kids:
+        if pid in _PROTECTED_PIDS:
+            continue
+        try:
+            os.waitpid(pid, os.WNOHANG)
+        except (ChildProcessError, OSError):
+            pass
+
+
+def install_reaper() -> bool:
+    """Reap adopted orphans on SIGCHLD. Returns False if the kernel refused.
+
+    Also records every process this one starts through `subprocess`, so the
+    reaper can tell "the game we launched and are waiting on" from "something
+    that re-parented onto us". SIGCHLD is blocked across the spawn so no
+    sweep can run between the fork and the bookkeeping.
+    """
+    global _reaper_installed
+    if _reaper_installed:
+        return True
+    try:
+        import subprocess
+        _orig_init = subprocess.Popen.__init__
+
+        def _tracking_init(self, *args, **kwargs):
+            try:
+                signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGCHLD})
+            except (AttributeError, OSError, ValueError):
+                _orig_init(self, *args, **kwargs)
+                protect_child(self.pid)
+                return
+            try:
+                _orig_init(self, *args, **kwargs)
+                protect_child(self.pid)
+            finally:
+                try:
+                    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGCHLD})
+                except (OSError, ValueError):
+                    pass
+
+        subprocess.Popen.__init__ = _tracking_init
+        signal.signal(signal.SIGCHLD, _reap_orphans)
+        _reaper_installed = True
+        return True
+    except Exception:
+        return False
+
+
 # ── /proc readers ─────────────────────────────────────────────────────
 
 def _read(path: str) -> str:

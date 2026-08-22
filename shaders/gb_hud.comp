@@ -1,0 +1,69 @@
+#version 450
+/* GreenBoost overlay , glyph rasteriser.
+ *
+ * One invocation per HUD pixel. Works out which character cell the pixel
+ * falls in, reads that cell's code point from the text buffer, tests the
+ * matching bit of an 8x8 bitmap glyph, and writes either the foreground
+ * colour or a translucent panel behind it.
+ *
+ * Declared rgba8 rather than relying on shaderStorageImageWriteWithoutFormat:
+ * the swapchain here is created mutable-format with a UNORM view (see
+ * gbvk_CreateSwapchainKHR), and a BGRA target is handled by swapping the
+ * components on the way out rather than by demanding an optional feature.
+ */
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0, rgba8) uniform image2D outImage;
+
+/* 8x8 glyphs, one row per byte, packed two rows per uint. 95 printable
+ * ASCII from 0x20. */
+layout(std430, binding = 1) readonly buffer Font  { uint font[]; };
+/* One code point per cell, row-major over cols x rows. 0 = blank. */
+layout(std430, binding = 2) readonly buffer Text  { uint text[]; };
+
+layout(push_constant) uniform Push {
+    ivec2 origin;      // top-left of the HUD in swapchain pixels
+    ivec2 cell;        // glyph cell size in pixels (8*scale)
+    ivec2 grid;        // cols, rows
+    vec4  fg;
+    vec4  bg;          // .a == 0 disables the panel
+    int   bgra;        // 1 = swap r/b on store
+    int   pad;
+} pc;
+
+void main()
+{
+    ivec2 local = ivec2(gl_GlobalInvocationID.xy);
+    if (local.x >= pc.grid.x * pc.cell.x || local.y >= pc.grid.y * pc.cell.y)
+        return;
+
+    ivec2 px = pc.origin + local;
+    ivec2 size = imageSize(outImage);
+    if (px.x < 0 || px.y < 0 || px.x >= size.x || px.y >= size.y)
+        return;
+
+    ivec2 cellxy = local / pc.cell;
+    int   idx    = cellxy.y * pc.grid.x + cellxy.x;
+    uint  ch     = text[idx];
+
+    bool lit = false;
+    if (ch >= 0x20u && ch < 0x7Fu) {
+        /* Which pixel of the 8x8 glyph, after scaling. */
+        ivec2 inner = (local - cellxy * pc.cell) * 8 / pc.cell;
+        uint g   = ch - 0x20u;
+        uint w   = font[g * 2u + uint(inner.y) / 4u];
+        uint row = (w >> ((uint(inner.y) % 4u) * 8u)) & 0xFFu;
+        lit = ((row >> uint(7 - inner.x)) & 1u) != 0u;
+    }
+
+    vec4 src = lit ? pc.fg : pc.bg;
+    if (src.a <= 0.0)
+        return;                      /* transparent panel: leave the game's pixel */
+
+    vec4 dst = imageLoad(outImage, px);
+    vec4 outc = vec4(mix(dst.rgb, src.rgb, src.a), 1.0);
+    if (pc.bgra != 0)
+        outc = outc.bgra;
+    imageStore(outImage, px, outc);
+}

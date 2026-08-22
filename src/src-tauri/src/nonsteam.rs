@@ -183,6 +183,41 @@ pub fn win_path_to_linux(prefix_root: &Path, win: &str) -> Option<PathBuf> {
     Some(prefix_root.join("drive_c").join(rest))
 }
 
+// ── launching a shortcut ──────────────────────────────────────────────
+//
+// A non-Steam shortcut has TWO ids and they are not interchangeable.
+//
+//   * the 32-bit `appid` above , the compatdata directory name, the
+//     CompatToolMapping key, and what our per-game profiles are keyed by;
+//   * a 64-bit "gameid", `(appid << 32) | 0x02000000`, which is the ONLY
+//     thing `steam://rungameid/` accepts for a shortcut.
+//
+// Handing Steam the 32-bit one is not an error, which is the whole problem:
+// `steam -applaunch 3274469611` exits 0, writes nothing to Steam's own log,
+// and launches nothing. Confirmed 2026-08-22 , that is exactly what the
+// Suite had been sending, so every non-Steam game (Battle.net and every
+// title under it) reported "Starting appid …" and then sat there until the
+// launch budget ran out. Ground truth for the conversion is Steam's own
+// console log from a working Battle.net launch on 2026-08-18: appid
+// 3274469611 in the compatdata path, `gameID 14063739891024396288` in the
+// process lines.
+pub const SHORTCUT_GAMEID_TAG: u64 = 0x0200_0000;
+
+/// The id `steam://rungameid/` needs for a non-Steam shortcut.
+pub fn shortcut_run_game_id(appid: u32) -> u64 {
+    ((appid as u64) << 32) | SHORTCUT_GAMEID_TAG
+}
+
+/// Is this appid a non-Steam shortcut on this machine?
+///
+/// Reads shortcuts.vdf rather than guessing from the number: Steam picks
+/// shortcut appids from the top of the 32-bit range, but nothing documents
+/// that as a rule, and a wrong guess would rewrite a real appid into an id
+/// that launches nothing.
+pub fn is_shortcut_appid(appid: u32) -> bool {
+    read_shortcuts().iter().any(|s| s.appid == appid)
+}
+
 // ── Battle.net product.db (protobuf) ──────────────────────────────────
 
 #[derive(Debug, Clone, Default)]
@@ -401,5 +436,14 @@ mod tests {
         install.extend(ld(2, b"bna"));
         let db = ld(1, &install);
         assert!(parse_product_db(&db).is_empty());
+    }
+
+    /// Ground truth, not arithmetic-for-its-own-sake: this exact pair was
+    /// read out of Steam's own console log on 2026-08-18, where a working
+    /// Battle.net launch wrote the compatdata path with the 32-bit appid and
+    /// `Adding process … for gameID 14063739891024396288` with the 64-bit id.
+    #[test]
+    fn shortcut_run_game_id_matches_steams_own() {
+        assert_eq!(shortcut_run_game_id(3274469611), 14063739891024396288);
     }
 }

@@ -104,6 +104,44 @@ fn sync_gb_gaming_mode(running: bool) {
     }
 }
 
+/// Steam runs its own helpers through the compat tool, under wine, in the
+/// game's own prefix and with the game's `SteamGameId` , `iscriptevaluator.exe`
+/// (which Steam BLOCKS on before it launches anything), `d3ddriverquery64.exe`,
+/// `xalia.exe`. Each of those spawns a wine preloader that is indistinguishable
+/// from the game by process name, prefix or appid. Only the command line says
+/// which is which.
+///
+/// Accepting one of these as "the game is running" reports a launch as
+/// succeeded while Steam is still deciding whether to start it , the exact
+/// failure LaunchStatus exists to prevent , and flips `gaming_mode` on for a
+/// script evaluator. The wrapper keeps GreenBoost out of those invocations
+/// (`_steam_internal_helper` in gb_proton_main.py); this keeps them out of the
+/// Suite's idea of a running game. Same list, same reason.
+const STEAM_INTERNAL_EXES: [&str; 7] = [
+    "iscriptevaluator.exe",
+    "d3ddriverquery.exe",
+    "d3ddriverquery64.exe",
+    "xalia.exe",
+    "steamerrorreporter.exe",
+    "steamerrorreporter64.exe",
+    "gameoverlayui.exe",
+];
+
+fn is_steam_internal_helper(pid: &str) -> bool {
+    let Ok(raw) = std::fs::read(format!("/proc/{pid}/cmdline")) else {
+        // Unreadable cmdline: treat it as a game. A false negative here only
+        // delays detection by one poll; a false positive would hide a real
+        // running game from the Live view.
+        return false;
+    };
+    let cmdline = String::from_utf8_lossy(&raw)
+        .replace('\0', " ")
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    STEAM_INTERNAL_EXES.iter().any(|exe| cmdline.contains(exe))
+        || cmdline.contains("/legacycompat/")
+}
+
 pub fn find_game_pid_impl() -> Option<u32> {
     let entries = std::fs::read_dir("/proc").ok()?;
     for entry in entries.flatten() {
@@ -119,6 +157,9 @@ pub fn find_game_pid_impl() -> Option<u32> {
                 || comm == "wine-preloader"
                 || (comm.starts_with("wine") && comm.contains("preloader"))
             {
+                if is_steam_internal_helper(&name) {
+                    continue;
+                }
                 if let Ok(pid) = name.parse::<u32>() {
                     sync_gb_gaming_mode(true);
                     return Some(pid);

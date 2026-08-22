@@ -14,6 +14,7 @@
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 use std::sync::Mutex;
+use std::time::SystemTime;
 
 /// The appid of the last game this Suite launched. Steam's URL handler gives
 /// us no handle, so the appid is the only thing we can carry forward , and
@@ -63,8 +64,30 @@ fn set_status(s: LaunchStatus) {
     if let Ok(mut g) = LAUNCH_STATUS.lock() { *g = Some(s); }
 }
 
+/// When the current launch was requested. The wrapper log is append-only and
+/// survives across sessions, so without this the tail of a PREVIOUS launch
+/// gets read back as this one's progress , a phase line that is plausible,
+/// specific, and about something that finished hours ago.
+static LAUNCH_STARTED_AT: Mutex<Option<SystemTime>> = Mutex::new(None);
+
 pub fn note_launch_pending(appid: &str) {
+    if let Ok(mut g) = LAUNCH_STARTED_AT.lock() { *g = Some(SystemTime::now()); }
     note_launch_progress(appid, 0, LAUNCH_BUDGET_S);
+}
+
+/// Has the wrapper written anything for THIS launch yet?
+///
+/// mtime, not content: the wrapper appends, so the file's own timestamp is
+/// the only thing that says whether any of those lines belong to this run.
+fn wrapper_log_is_current(appid: &str) -> bool {
+    let Some(started) = LAUNCH_STARTED_AT.lock().ok().and_then(|g| *g) else {
+        return false;
+    };
+    let Ok(meta) = std::fs::metadata(wrapper_log_path(appid)) else { return false };
+    let Ok(modified) = meta.modified() else { return false };
+    // One second of slack: the launch instant and the wrapper's first write
+    // can land in the same second with the filesystem rounding the wrong way.
+    modified + std::time::Duration::from_secs(1) >= started
 }
 
 pub fn note_launch_progress(appid: &str, elapsed_s: u64, budget_s: u64) {
@@ -89,7 +112,11 @@ pub const LAUNCH_BUDGET_S: u64 = 180;
 /// Falls back to a time-shaped description only when the wrapper has written
 /// nothing at all, and says so rather than inventing a stage.
 fn current_phase(appid: &str, elapsed_s: u64) -> String {
-    let tail = wrapper_log_tail(appid, 6);
+    let tail = if wrapper_log_is_current(appid) {
+        wrapper_log_tail(appid, 6)
+    } else {
+        Vec::new()
+    };
     for line in tail.iter().rev() {
         let l = line.to_ascii_lowercase();
         // Ordered most-specific first; these are the wrapper's own markers.
@@ -112,6 +139,16 @@ fn current_phase(appid: &str, elapsed_s: u64) -> String {
             return "reading the per-game profile".into();
         }
     }
+    // Nothing from our wrapper yet. Before blaming it, check whether Steam is
+    // still busy with its own pre-launch step , it blocks on those, and until
+    // one finishes the game is never handed to GreenBoost at all.
+    if let Some(started) = LAUNCH_STARTED_AT.lock().ok().and_then(|g| *g) {
+        if let Some(helper) = steam_helper_activity(started) {
+            return format!(
+                "Steam is still running its own pre-launch step ({helper}) , \
+                 the game has not been handed to GreenBoost yet");
+        }
+    }
     if elapsed_s < 10 {
         "waiting for Steam to accept the request".into()
     } else {
@@ -125,10 +162,29 @@ pub fn note_launch_started(appid: &str) {
 }
 
 pub fn note_launch_failed(appid: &str) {
-    set_status(LaunchStatus::Failed {
-        appid: appid.to_string(),
-        log: wrapper_log_tail(appid, 20),
-    });
+    // Only this launch's lines. An older session's tail shown as the reason
+    // sends the reader after a problem that was already over.
+    let mut log = if wrapper_log_is_current(appid) {
+        wrapper_log_tail(appid, 20)
+    } else {
+        Vec::new()
+    };
+    if log.is_empty() {
+        if let Some(started) = LAUNCH_STARTED_AT.lock().ok().and_then(|g| *g) {
+            if let Some(helper) = steam_helper_activity(started) {
+                log.push(format!(
+                    "GreenBoost was never asked to launch anything. Steam ran \
+                     its own pre-launch helper ({helper}) through the compat \
+                     tool and blocked on it, so the game was never started. \
+                     The compatibility tool setting is fine , this is Steam's \
+                     own step, and it runs on plain upstream Proton."));
+                log.push(
+                    "Clear it with:  pkill -f iscriptevaluator; pkill -f d3ddriverquery"
+                        .to_string());
+            }
+        }
+    }
+    set_status(LaunchStatus::Failed { appid: appid.to_string(), log });
 }
 
 pub fn launch_status() -> LaunchStatus {
@@ -143,16 +199,54 @@ pub fn launch_status() -> LaunchStatus {
 /// body could not be parsed or loaded at all , which is exactly the class of
 /// failure that leaves no other trace the Suite can reach, since the body's
 /// stderr tee never gets installed.
-fn wrapper_log_tail(appid: &str, n: usize) -> Vec<String> {
+/// Steam's own pre-launch helpers, and when one last ran.
+///
+/// Steam runs `iscriptevaluator.exe`, `d3ddriverquery64.exe` and friends
+/// through the compat tool BEFORE it launches the game, and it blocks on them.
+/// The wrapper stands aside for those (see `_steam_internal_helper` in
+/// gb_proton_main.py) and logs one line per delegation here, so this file is
+/// the Suite's only view of a launch that has not reached GreenBoost yet.
+///
+/// Without it the Suite spends the whole budget on "waiting for Proton , the
+/// wrapper has not logged anything yet" and then fails with an empty log,
+/// which reads as "GreenBoost did nothing" when the truth is "Steam never got
+/// far enough to ask". Confirmed live 2026-08-21: a `d3ddriverquery64.exe`
+/// that would not finish held a launch at "Launching" indefinitely, with
+/// nothing anywhere on screen naming it.
+fn steam_helper_activity(since: SystemTime) -> Option<String> {
+    let path = wrapper_log_dir().join("greenboost-proton-helpers.log");
+    let meta = std::fs::metadata(&path).ok()?;
+    let modified = meta.modified().ok()?;
+    if modified + std::time::Duration::from_secs(1) < since {
+        return None;                       // stale , from an earlier launch
+    }
+    let text = std::fs::read_to_string(&path).ok()?;
+    // Each line is "<helper>.exe is Steam's own helper, not the game , ...".
+    let last = text.lines().rev().find(|l| !l.trim().is_empty())?;
+    let name = last.split_whitespace()
+        .find(|w| w.to_ascii_lowercase().ends_with(".exe"))
+        .unwrap_or("a pre-launch step");
+    Some(name.to_string())
+}
+
+fn wrapper_log_dir() -> std::path::PathBuf {
     let base = std::env::var("XDG_DATA_HOME")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| {
             std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
                 .join(".local/share")
         });
-    let path = base.join("greenboost/proton-logs")
-                   .join(format!("greenboost-proton-{appid}.log"));
-    let Ok(text) = std::fs::read_to_string(&path) else { return Vec::new() };
+    base.join("greenboost/proton-logs")
+}
+
+fn wrapper_log_path(appid: &str) -> std::path::PathBuf {
+    wrapper_log_dir().join(format!("greenboost-proton-{appid}.log"))
+}
+
+fn wrapper_log_tail(appid: &str, n: usize) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(wrapper_log_path(appid)) else {
+        return Vec::new();
+    };
     text.lines()
         .map(str::trim_end)
         .filter(|l| !l.is_empty())

@@ -363,7 +363,17 @@ def _own_game_tree(gameid: str, prefix: str = "") -> None:
     gl = _lifecycle()
     if gl is None:
         return
-    if not gl.set_child_subreaper():
+    if gl.set_child_subreaper():
+        # Adopting orphans without reaping them leaves `<defunct>` entries
+        # piled under this process for the whole session (seen live
+        # 2026-08-21: wineboot.exe, wine64-preloader, python3). The reaper
+        # never touches the pids we launched ourselves , see install_reaper.
+        if not gl.install_reaper():
+            sys.stderr.write(
+                "[greenboost-proton] could not install the child reaper , "
+                "processes this launch adopts will show as <defunct> until "
+                "the game exits. The game itself is unaffected.\n")
+    else:
         sys.stderr.write(
             "[greenboost-proton] kernel refused PR_SET_CHILD_SUBREAPER , if "
             "this game's launcher forks and exits, stopping it from the Suite "
@@ -660,6 +670,10 @@ def _dry_run_dump(proton_upstream, launch_argv, perf_lock=None, desktop=None):
                 f"[greenboost-proton] DRY-RUN: could not undo {type(res).__name__} "
                 f"({_e!r}) , your machine may still be in game mode. "
                 f"Launch and quit a game, or reboot, to clear it.\n")
+    # The session record is the third thing this exit would otherwise leave
+    # behind: a file naming a pid that is about to stop existing, which the
+    # Suite then has to prune before it can answer "is a game running?".
+    _release_game_tree()
     sys.stderr.write("[greenboost-proton] DRY-RUN: system state restored.\n")
     sys.exit(0)
 
@@ -805,15 +819,39 @@ def _preflight(profile=None):
     if _want_mh:
         _mh_layer_candidates = [
             "/usr/share/vulkan/implicit_layer.d/MangoHud.json",
+            "/usr/share/vulkan/implicit_layer.d/MangoHud.x86_64.json",
             os.path.join(_home_pf, ".local", "share", "vulkan", "implicit_layer.d",
                           "MangoHud.json"),
-            "/usr/share/vulkan/implicit_layer.d/MangoHud.x86_64.json",
+            os.path.join(_home_pf, ".local", "share", "vulkan", "implicit_layer.d",
+                          "MangoHud.x86_64.json"),
         ]
         if not shutil.which("mangohud") and not any(
                 os.path.exists(p) for p in _mh_layer_candidates):
-            issues.append(
-                "Live Overlay is enabled but MangoHud is not installed "
-                "(sudo apt install mangohud, or re-run install.sh)")
+            # Exactly the false negative the layer check above documents, and
+            # for the same reason: /usr/share and /usr/bin in here belong to
+            # the container, not the host. Confirmed live 2026-08-21 , this
+            # printed "MangoHud is not installed" on a machine carrying
+            # mangohud 0.8.2 from apt with its manifest at
+            # /usr/share/vulkan/implicit_layer.d/MangoHud.x86_64.json. Telling
+            # someone to install what they already have sends them off to fix
+            # a thing that is not broken, and teaches them to distrust the
+            # rest of pre-flight. MangoHud is an implicit Vulkan layer,
+            # re-staged host-side by pressure-vessel just like ours, so this
+            # check can only ever produce a false negative under Steam.
+            # install.sh already carries mangohud as a hard dependency, so on
+            # a machine the installer has touched, the honest answer here is
+            # "cannot tell from in here".
+            if _launched_by_steam:
+                sys.stderr.write(
+                    "[greenboost-proton] MangoHud not visible from inside the "
+                    "Steam sandbox , expected here (host-side implicit Vulkan "
+                    "layers are re-staged by pressure-vessel, same as ours "
+                    "above), not evidence the overlay is missing. MANGOHUD=1 "
+                    "is exported either way.\n")
+            else:
+                issues.append(
+                    "Live Overlay is enabled but MangoHud is not installed "
+                    "(sudo apt install mangohud, or re-run install.sh)")
     # 6. gb_dataflux importable , without it every gaming_session event
     #    (_df_emit) is silently dropped and the VRAM-risk badge / session
     #    history (intelligence strategy #1) never gets any data.
@@ -1985,6 +2023,30 @@ def _steam_common_dirs():
     return list(dict.fromkeys(dirs))  # deduplicate, preserve order
 
 
+def _normalize_shortcut_gameid(val):
+    """A non-Steam shortcut's 64-bit gameid, reduced to its 32-bit appid.
+
+    For a shortcut Steam sets `SteamGameId` to `(appid << 32) | 0x02000000`
+    and leaves `SteamAppId` at 0, while `STEAM_COMPAT_DATA_PATH` still ends
+    in the 32-bit appid. Taking SteamGameId verbatim named this wrapper's log
+    `greenboost-proton-14063739891024396288.log` while the Suite, which only
+    ever has the 32-bit id, watched `greenboost-proton-3274469611.log`. Two
+    files, one launch, and a launch status that could never see any progress
+    the wrapper reported. The 32-bit appid wins because everything else is
+    already keyed by it: the compatdata directory, the per-game profile, the
+    compat-tool mapping.
+    """
+    if not val.isdigit():
+        return val
+    try:
+        gid = int(val)
+    except ValueError:
+        return val
+    if gid > 0xFFFFFFFF and (gid & 0xFFFFFFFF) == 0x02000000:
+        return str(gid >> 32)
+    return val
+
+
 def _resolve_appid():
     """The AppID, by every route Steam might have given it to us.
 
@@ -1997,7 +2059,7 @@ def _resolve_appid():
     for var in ("SteamGameId", "SteamAppId", "STEAM_APPID"):
         val = os.environ.get(var, "").strip()
         if val:
-            return val
+            return _normalize_shortcut_gameid(val)
     # Every Proton launch gets a compat-data dir named after the AppID.
     compat = os.environ.get("STEAM_COMPAT_DATA_PATH", "").strip().rstrip("/")
     if compat:
@@ -2158,17 +2220,68 @@ class _TeeStderr:
                 pass
 
 
+# Steam runs this same compat tool for things that are not the game.
+# `iscriptevaluator.exe` is the important one: Steam BLOCKS on it before it
+# launches anything. Confirmed live 2026-08-21 , that helper came through
+# here and got the full game treatment (subreaper, session record, power
+# lock + watchdog, DXVK/gplasync staging, its own
+# greenboost-proton-<appid>.log), then hung. With Steam waiting on it the
+# game never started, and the Suite, reading that log, reported "staging
+# DXVK/VKD3D libraries" for something that was never going to become a game.
+# `d3ddriverquery64.exe` and `xalia.exe` came through the same way and were
+# SIGTERMed at 60 s each. Nothing GreenBoost does means anything for these.
+_STEAM_INTERNAL_EXES = frozenset((
+    "iscriptevaluator.exe",
+    "d3ddriverquery.exe",
+    "d3ddriverquery64.exe",
+    "xalia.exe",
+    "steamerrorreporter.exe",
+    "steamerrorreporter64.exe",
+    "gameoverlayui.exe",
+))
+
+
+def _steam_internal_helper():
+    """Name of the Steam-internal helper this invocation is, or "" for a game.
+
+    Deliberately matched on the target executable, not on the verb alone.
+    Steam runs the real game with `waitforexitandrun` and helpers with `run`,
+    but `run` is also the verb in the documented dry-run check and in some
+    non-Steam shortcuts , silently changing what those do is a worse trade
+    than missing some future helper we have not seen yet.
+    """
+    if os.environ.get("GREENBOOST_DRY_RUN", "0") == "1":
+        return ""
+    if len(sys.argv) < 3 or sys.argv[1] not in ("run", "runinprefix"):
+        return ""
+    target = sys.argv[2].replace("\\", "/")
+    base = os.path.basename(target).lower()
+    if base in _STEAM_INTERNAL_EXES:
+        return base
+    if "/legacycompat/" in target.lower():
+        return base or "legacycompat script"
+    for arg in sys.argv[1:]:
+        if arg.replace("\\", "/").lower().endswith(".vdf"):
+            return base or "vdf script"
+    return ""
+
+
 def main():
     # Install the tee before ANY other output , SteamGameId is already set
     # by Steam by the time this wrapper is exec'd, so the appid is known
     # without waiting for _run_greenboost_launch()'s own `gameid` local.
+    # A Steam-internal helper gets its own shared log, never the per-appid
+    # one , the Suite reads that file to describe what the LAUNCH is doing,
+    # and a helper's lines there read as game progress that never arrives.
+    _helper = _steam_internal_helper()
     _wrapper_log_dir = os.path.expanduser("~/.local/share/greenboost/proton-logs")
     try:
         os.makedirs(_wrapper_log_dir, exist_ok=True)
         _wrapper_log_appid = _resolve_appid() or "unknown"
-        sys.stderr = _TeeStderr(
-            sys.stderr,
-            os.path.join(_wrapper_log_dir, f"greenboost-proton-{_wrapper_log_appid}.log"))
+        _wrapper_log_name = ("greenboost-proton-helpers.log" if _helper
+                             else f"greenboost-proton-{_wrapper_log_appid}.log")
+        sys.stderr = _TeeStderr(sys.stderr,
+                                os.path.join(_wrapper_log_dir, _wrapper_log_name))
     except OSError:
         pass  # no local copy , stderr still reaches journalctl as before
 
@@ -2226,6 +2339,26 @@ def main():
             "in the Suite under Global Settings → Upstream Proton.\n"
             % _upstream_install_hint)
         sys.exit(1)
+
+    if _helper:
+        # Standing aside is not enough on its own. The Vulkan layer is
+        # IMPLICIT: the loader activates it from GREENBOOST_VULKAN=1 in the
+        # environment, no matter which proton script ran. Steam inherits that
+        # variable whenever the Suite is what started Steam, so the layer was
+        # loading into `d3ddriverquery64.exe` and `iscriptevaluator.exe` and
+        # inflating the VRAM figures of the very probe Steam uses to decide
+        # what the driver can do (seen live 2026-08-21, layer log:
+        # `CreateInstance: app='unknown'` with no CreateDevice after it).
+        # GREENBOOST_VULKAN_DISABLE=1 is the manifest's own documented
+        # switch, and disable_environment beats enable_environment in the
+        # loader, so this covers the helper and every wine process under it.
+        os.environ["GREENBOOST_VULKAN_DISABLE"] = "1"
+        sys.stderr.write(
+            "[greenboost-proton] %s is Steam's own helper, not the game , "
+            "handing it straight to %s with nothing applied (Vulkan layer "
+            "disabled for it too).\n"
+            % (_helper, proton_upstream))
+        os.execv(proton_upstream, [proton_upstream] + sys.argv[1:])
 
     if os.environ.get("GREENBOOST_DISABLE", "0") == "1":
         sys.stderr.write(f"[greenboost-proton] GreenBoost disabled , delegating to {proton_upstream}\n")
@@ -2749,8 +2882,14 @@ def _run_greenboost_launch(proton_upstream, _upstream_label, _upstream_install_h
     # was actually meant to do , inventing one now would be guessing at a
     # feature, not fixing a bug. The fan daemon's real unit is
     # scripts/gb-gaming-fan-daemon.service, unaffected by this.
-    _df_emit({"kind": "gaming_session", "action": "start",
-              "appid": gameid, "gpu": gpu_name})
+    # Not on a dry run. The dry-run exit below is outside the session
+    # try/finally, so a start emitted here would never get its matching stop
+    # , a phantom session in that appid's history, which is what the Games
+    # view's VRAM-risk badge and analyze_game_sessions() read. Seen live
+    # 2026-08-21: two dry runs, two starts, no stops.
+    if os.environ.get("GREENBOOST_DRY_RUN", "0") != "1":
+        _df_emit({"kind": "gaming_session", "action": "start",
+                  "appid": gameid, "gpu": gpu_name})
 
     # ── PR-GGGG: dxvk-gplasync DLL staging ─────────────────────────────────────
     # Stages a background helper that, once upstream Proton has set up the

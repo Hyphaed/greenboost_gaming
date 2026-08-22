@@ -1222,11 +1222,22 @@ export function GamesView() {
   const [gspInput, setGspInput] = useState<string>("");
   const [gspMsg, setGspMsg] = useState<string | null>(null);
 
-  // Per-game DLSS/Streamline DLL version status (not fetched until the
-  // user asks , "not checked yet" is a real, distinct state from "up to
-  // date").
-  const [dlssStatus, setDlssStatus] = useState<DlssStatus | null>(null);
+  // Per-game DLSS/Streamline DLL version status, keyed by game PATH.
+  //
+  // This used to be a single slot that the selection effect below reset to
+  // null. That effect fires on every change of the `selected` OBJECT, and a
+  // games-list refresh hands back a fresh object for the same game , so a
+  // scan that had already run was wiped, and nothing re-ran it, because the
+  // only thing that re-triggered a scan was the path CHANGING. Confirmed
+  // 2026-08-21: "game shipped with v2.8.0.0" appeared right after an
+  // Upgrade (which scans explicitly) and was gone on the next app open.
+  // Keyed by path, a refresh cannot lose it and switching back is instant.
+  const [dlssByPath, setDlssByPath] = useState<Record<string, DlssStatus>>({});
   const [scanningDlss, setScanningDlss] = useState(false);
+  const [dlssScanError, setDlssScanError] = useState<string | null>(null);
+  // Paths already scanned this session , stops a failing scan from looping.
+  const dlssAttempted = useRef<Set<string>>(new Set());
+  const dlssStatus = selected ? (dlssByPath[selected.path] ?? null) : null;
 
   // DirectStorage diagnostic , cheap (local DLL scan + block-device lookup,
   // no network), so unlike DLSS status this auto-fetches on game select
@@ -1407,21 +1418,38 @@ export function GamesView() {
       setGameOverrides(null);
       setGameAnalytics(null);
     }
-    // Switching games invalidates any prior scan , go back to "not checked".
-    setDlssStatus(null);
   }, [selected, loadSettings]);
 
   const handleScanDlssStatus = useCallback(async (): Promise<DlssStatus | null> => {
     if (!selected) return null;
+    const path = selected.path;
+    dlssAttempted.current.add(path);
     setScanningDlss(true);
+    setDlssScanError(null);
     let status: DlssStatus | null = null;
     try {
-      status = await invoke<DlssStatus>("get_dlss_status", { path: selected.path });
-      setDlssStatus(status);
-    } catch (e) { console.error(e); }
+      status = await invoke<DlssStatus>("get_dlss_status", { path });
+      const got = status;
+      setDlssByPath(prev => ({ ...prev, [path]: got }));
+    } catch (e: any) {
+      // Was console.error only, which left the header reading "Not checked
+      // for updates yet" , indistinguishable from a game with nothing to
+      // show, and it hides the one line that says why.
+      console.error(e);
+      setDlssScanError(String(e?.message ?? e));
+    }
     setScanningDlss(false);
     return status;
   }, [selected]);
+
+  // Scan once per game, automatically. The "game shipped with vX" tag and the
+  // Shipped/Backup dropdown entries all come from this, and they have to be
+  // there the first time a game is opened , not only after an Upgrade.
+  useEffect(() => {
+    const path = selected?.path;
+    if (!path || dlssByPath[path] || dlssAttempted.current.has(path)) return;
+    void handleScanDlssStatus();
+  }, [selected?.path, dlssByPath, handleScanDlssStatus]);
 
   // Base object for any spot that needs to construct a wrappers value from
   // scratch (no per-game override existed yet). mangohud seeds from the
@@ -1581,6 +1609,9 @@ export function GamesView() {
         setDlssMsg(ok ? "DLSS DLLs restored from backup."
                       : "Restore finished with errors , see modal log.");
         loadGames();
+        // The DLLs on disk just changed , the panel must not keep showing
+        // the versions from before the rollback.
+        void handleScanDlssStatus();
       },
     });
   };
@@ -1602,7 +1633,18 @@ export function GamesView() {
         setDlssMsg(ok ? "DLSS DLLs restored to the shipped version."
                       : "Restore finished with errors , see modal log.");
         loadGames();
-        setDlssStatus(null);
+        // The files on disk just changed , drop this game's scan and take a
+        // fresh one, rather than leaving pre-restore versions on screen.
+        const path = selectedRef.current?.path;
+        if (path) {
+          dlssAttempted.current.delete(path);
+          setDlssByPath(prev => {
+            const next = { ...prev };
+            delete next[path];
+            return next;
+          });
+        }
+        void handleScanDlssStatus();
       },
     });
   };
@@ -1636,13 +1678,13 @@ export function GamesView() {
       }
       if (st.state === "failed" && st.appid === appid) {
         const log = st.log.length
-          ? "\n\nWhat the Proton wrapper said:\n" + st.log.join("\n")
+          ? "\n\nDetails:\n" + st.log.join("\n")
           : "\n\nThe Proton wrapper wrote no log at all, which usually means " +
             "Steam never reached it , check the game's compatibility tool is " +
             "set to GreenBoost Proton.";
         setMsg(
           "No game process ever started. Steam accepted the launch, but nothing " +
-          "came up in 60 seconds.\n\nNothing is broken and no settings changed " +
+          "came up in 3 minutes.\n\nNothing is broken and no settings changed " +
           ", you can launch again, or pick a different Proton under Global " +
           "Settings \u2192 Upstream Proton." + log);
         return;
@@ -2054,10 +2096,11 @@ export function GamesView() {
             <div className="game-detail-body">
             {selected.dlls.length > 0 && (
               <DllPicker game={selected}
-                         onApplied={() => loadGames()}
+                         onApplied={() => { loadGames(); void handleScanDlssStatus(); }}
                          refreshTrigger={cacheRevision}
                          dlssStatus={dlssStatus}
                          scanningDlss={scanningDlss}
+                         scanError={dlssScanError}
                          onScanDlssStatus={handleScanDlssStatus}
                          onRestoreToShipped={handleRestoreDlssToOriginal} />
             )}

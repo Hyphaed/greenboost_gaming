@@ -297,6 +297,10 @@ install_system_deps() {
                 webkit2gtk3-soup2-devel libsoup-devel
                 python3-gobject
                 gcc gcc-c++ pkgconf-pkg-config
+                # Live Overlay backend , was missing here while every other
+                # distro list carried it, so the toggle had nothing behind it
+                # on openSUSE.
+                mangohud
             )
             zypper install -y "${pkgs[@]}" \
                 || warn "some packages failed to install , continuing anyway"
@@ -1117,8 +1121,17 @@ install -d "$BINDIR"
 cat > "$BINDIR/$APP_NAME" <<EOF
 #!/usr/bin/env bash
 # GreenBoost Gaming Suite launcher
-# Sets the env that enables the Vulkan layer + starts the GUI.
-export GREENBOOST_VULKAN=1
+# Starts the GUI. Deliberately does NOT export GREENBOOST_VULKAN=1.
+#
+# It used to. The Vulkan layer is implicit, so that one variable turned it on
+# for this process and, because Steam is usually started BY this app, for
+# Steam and every single thing Steam spawns: its own pre-launch helpers under
+# wine, and the app's own GStreamer/WebKit video decode. Confirmed 2026-08-21
+# from the layer log , CreateInstance lines for 'unknown' (d3ddriverquery64
+# probing the driver), for '' and for 'GStreamer', none of them a game. The
+# game still gets the layer: the Proton wrapper exports GREENBOOST_VULKAN=1
+# itself right before it execs the game, which is the only place that knows
+# it is looking at a game.
 export GREENBOOST_ACTIVE=1
 
 # GDK / Wayland niceties

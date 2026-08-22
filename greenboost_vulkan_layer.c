@@ -814,6 +814,22 @@ typedef struct {
     PFN_vkGetPhysicalDeviceMemoryProperties2 next_get_mem_props2;
 } GbInstData;
 
+/* PR-GGGG: vkEnumerateDeviceExtensionProperties, resolved at CreateInstance.
+ *
+ * It cannot be resolved inside gbvk_CreateDevice: vkGetInstanceProcAddr
+ * returns NULL for it when passed VK_NULL_HANDLE, and CreateDevice is handed
+ * a VkPhysicalDevice, not the VkInstance it came from.  Resolving it once at
+ * CreateInstance, where a real instance handle exists, is what the rest of
+ * this file already does for the other instance-level entry points.
+ *
+ * A process with two Vulkan instances would have the second overwrite the
+ * first.  Both are valid pointers into the same loader/driver for the same
+ * physical devices, so the query still answers correctly; and if it were ever
+ * wrong, CreateDevice falls back to creating the device without our
+ * extensions rather than failing.
+ */
+static PFN_vkEnumerateDeviceExtensionProperties g_next_enum_dev_ext = NULL;
+
 /* ── Per-device state ─────────────────────────────────────────────────── */
 
 typedef struct GbDevData_ {
@@ -894,6 +910,7 @@ typedef struct GbDevData_ {
     PFN_vkCmdCopyImage                   next_cmd_copy_image;
     PFN_vkCmdBindPipeline                next_cmd_bind_pipeline;
     PFN_vkCmdBindDescriptorSets          next_cmd_bind_desc_sets;
+    PFN_vkCmdPushConstants               next_cmd_push_constants;
     PFN_vkCmdDispatch                    next_cmd_dispatch;
     PFN_vkCreateSemaphore                next_create_semaphore;
     PFN_vkDestroySemaphore               next_destroy_semaphore;
@@ -1496,6 +1513,32 @@ static pthread_mutex_t g_nis_swap_mu = PTHREAD_MUTEX_INITIALIZER;
 extern const char nis_sharpen_spv_start[], nis_sharpen_spv_end[];
 extern const char nis_upscale_spv_start[],  nis_upscale_spv_end[];
 
+/* ── GreenBoost overlay ───────────────────────────────────────────────
+ *
+ * An in-game HUD drawn by a compute pass over the swapchain image, the same
+ * mechanism MangoHud uses, except this one reports the things GreenBoost
+ * knows and MangoHud cannot see: which memory tier the game's allocations
+ * actually landed in, and whether the recorder is armed.
+ *
+ * Enable with GREENBOOST_OVERLAY=1. Visibility and page are then driven at
+ * runtime by $XDG_RUNTIME_DIR/greenboost-overlay.state, which
+ * gb_gaming/hotkey_daemon.py rewrites atomically when a bound key is pressed.
+ * A file rather than a socket because this code runs inside the game's
+ * present path: a read that blocks there is a stutter, and a rename is the
+ * one update a reader cannot catch half-done.
+ */
+extern const char gb_hud_spv_start[], gb_hud_spv_end[];
+#include "gb_hud_font.h"
+
+#define GB_HUD_COLS      44
+#define GB_HUD_ROWS      8
+#define GB_HUD_CELLS     (GB_HUD_COLS * GB_HUD_ROWS)
+#define GB_HUD_PAGES     4
+/* Re-stat the control file at most this often. The present path must not
+ * pay a syscall per frame for a value that changes when a human presses a
+ * key. */
+#define GB_HUD_POLL_NS   250000000ull
+
 /* Read the NIS SPIR-V for the requested variant.
  * use_upscale=1 → upscale shader (NIS_SCALER=1); 0 → sharpen-only.
  * Primary: embedded blobs linked into the .so.
@@ -1682,6 +1725,576 @@ static void gbvk_nis_init_device(GbDevData *d, VkDevice device)
              use_upscale ? "upscale" : "sharpen", nis_scale);
 }
 
+/* Shared with the NIS path, which defines it further down. */
+static uint32_t nis_find_mem_type(const VkPhysicalDeviceMemoryProperties *mp,
+                                  uint32_t type_bits, VkMemoryPropertyFlags want);
+
+/* ── overlay: runtime control ─────────────────────────────────────────── */
+
+typedef struct {
+    int      visible;
+    int      page;
+    uint64_t last_poll_ns;
+} GbHudControl;
+
+static GbHudControl g_hud_ctl;
+static pthread_mutex_t g_hud_ctl_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static uint64_t gbvk_now_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+static int gbvk_hud_enabled(void)
+{
+    const char *e = getenv("GREENBOOST_OVERLAY");
+    return e && e[0] == '1';
+}
+
+/* Read the control file, at most every GB_HUD_POLL_NS. */
+static void gbvk_hud_poll_control(int *visible, int *page)
+{
+    uint64_t now = gbvk_now_ns();
+    pthread_mutex_lock(&g_hud_ctl_mu);
+    if (now - g_hud_ctl.last_poll_ns >= GB_HUD_POLL_NS) {
+        g_hud_ctl.last_poll_ns = now;
+        const char *rt = getenv("XDG_RUNTIME_DIR");
+        char path[512];
+        if (rt && *rt)
+            snprintf(path, sizeof(path), "%s/greenboost-overlay.state", rt);
+        else
+            snprintf(path, sizeof(path), "/run/user/%u/greenboost-overlay.state",
+                     (unsigned)getuid());
+        FILE *f = fopen(path, "r");
+        if (f) {
+            int v = 0, pg = 0;
+            if (fscanf(f, "%d %d", &v, &pg) == 2) {
+                g_hud_ctl.visible = v ? 1 : 0;
+                g_hud_ctl.page    = (pg % GB_HUD_PAGES + GB_HUD_PAGES) % GB_HUD_PAGES;
+            }
+            fclose(f);
+        } else {
+            /* No control file yet means nobody has pressed the toggle. Default
+             * to visible so GREENBOOST_OVERLAY=1 shows something on its own,
+             * rather than looking broken until the daemon is running. */
+            g_hud_ctl.visible = 1;
+        }
+    }
+    *visible = g_hud_ctl.visible;
+    *page    = g_hud_ctl.page;
+    pthread_mutex_unlock(&g_hud_ctl_mu);
+}
+
+/* ── overlay: frame timing ───────────────────────────────────────────── */
+
+#define GB_HUD_FRAME_WINDOW 120
+
+typedef struct {
+    uint64_t last_ns;
+    float    dt_ms[GB_HUD_FRAME_WINDOW];
+    int      n;
+    int      head;
+} GbHudTiming;
+
+static GbHudTiming g_hud_time;
+
+static void gbvk_hud_tick(float *fps, float *avg_ms, float *p1_ms)
+{
+    uint64_t now = gbvk_now_ns();
+    if (g_hud_time.last_ns) {
+        float dt = (float)(now - g_hud_time.last_ns) / 1e6f;
+        /* A frame longer than a second is an alt-tab or a load screen, not a
+         * frame time. Letting it into the window poisons the average and the
+         * percentile for the next two seconds. */
+        if (dt > 0.0f && dt < 1000.0f) {
+            g_hud_time.dt_ms[g_hud_time.head] = dt;
+            g_hud_time.head = (g_hud_time.head + 1) % GB_HUD_FRAME_WINDOW;
+            if (g_hud_time.n < GB_HUD_FRAME_WINDOW) g_hud_time.n++;
+        }
+    }
+    g_hud_time.last_ns = now;
+
+    *fps = 0.0f; *avg_ms = 0.0f; *p1_ms = 0.0f;
+    if (g_hud_time.n <= 0) return;
+
+    float sum = 0.0f, worst = 0.0f;
+    /* 1% low, reported as a frame TIME: the number that shows a stutter the
+     * average hides. With a 120-frame window the top 1% is one frame, so this
+     * is the window maximum by construction , say so rather than implying a
+     * real percentile over a larger sample. */
+    for (int i = 0; i < g_hud_time.n; i++) {
+        sum += g_hud_time.dt_ms[i];
+        if (g_hud_time.dt_ms[i] > worst) worst = g_hud_time.dt_ms[i];
+    }
+    *avg_ms = sum / (float)g_hud_time.n;
+    *p1_ms  = worst;
+    if (*avg_ms > 0.0f) *fps = 1000.0f / *avg_ms;
+}
+
+/* ── overlay: per-swapchain resources ────────────────────────────────── */
+
+typedef struct {
+    VkSwapchainKHR   swapchain;
+    VkDevice         device;
+    uint32_t         width, height, image_count;
+    VkFormat         storage_fmt;
+    VkImageView      views[GBVK_MAX_SWAP_IMAGES];
+    VkBuffer         font_buf,  text_buf;
+    VkDeviceMemory   font_mem,  text_mem;
+    void            *text_map;
+    VkDescriptorPool desc_pool;
+    VkDescriptorSet  sets[GBVK_MAX_SWAP_IMAGES];
+    VkCommandPool    cmd_pool;
+    VkCommandBuffer  cbs[GBVK_MAX_SWAP_IMAGES];
+    VkSemaphore      done[GBVK_MAX_SWAP_IMAGES];
+    int              ready;
+} GbHudSwapState;
+
+static GbHudSwapState g_hud_swap[GBVK_MAX_SWAPCHAINS];
+static pthread_mutex_t g_hud_swap_mu = PTHREAD_MUTEX_INITIALIZER;
+
+typedef struct {
+    int32_t origin[2];
+    int32_t cell[2];
+    int32_t grid[2];
+    float   fg[4];
+    float   bg[4];
+    int32_t bgra;
+    int32_t pad;
+} GbHudPush;
+
+static GbHudSwapState *hud_state_find(VkSwapchainKHR sc)
+{
+    for (int i = 0; i < GBVK_MAX_SWAPCHAINS; i++)
+        if (g_hud_swap[i].swapchain == sc) return &g_hud_swap[i];
+    return NULL;
+}
+
+static GbHudSwapState *hud_state_alloc(VkSwapchainKHR sc)
+{
+    for (int i = 0; i < GBVK_MAX_SWAPCHAINS; i++)
+        if (g_hud_swap[i].swapchain == VK_NULL_HANDLE) {
+            memset(&g_hud_swap[i], 0, sizeof(g_hud_swap[i]));
+            g_hud_swap[i].swapchain = sc;
+            return &g_hud_swap[i];
+        }
+    return NULL;
+}
+
+/* ── overlay: device-level pipeline ──────────────────────────────────── */
+
+static int g_hud_dev_ready, g_hud_dev_failed;
+static VkShaderModule        g_hud_module;
+static VkDescriptorSetLayout g_hud_dsl;
+static VkPipelineLayout      g_hud_playout;
+static VkPipeline            g_hud_pipeline;
+
+static int gbvk_hud_init_device(GbDevData *d, VkDevice dev)
+{
+    if (g_hud_dev_ready)  return 1;
+    if (g_hud_dev_failed) return 0;
+    if (!d || !d->next_create_shader_module || !d->next_create_dsl ||
+        !d->next_create_player || !d->next_create_compute_pipelines ||
+        !d->next_cmd_push_constants) {
+        g_hud_dev_failed = 1;
+        gbvk_log("overlay: device lacks an entry point we need, disabled");
+        return 0;
+    }
+
+    size_t spv_len = (size_t)(gb_hud_spv_end - gb_hud_spv_start);
+    VkShaderModuleCreateInfo smci = {
+        .sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = spv_len,
+        .pCode    = (const uint32_t *)gb_hud_spv_start,
+    };
+    if (d->next_create_shader_module(dev, &smci, NULL, &g_hud_module) != VK_SUCCESS) {
+        g_hud_dev_failed = 1;
+        gbvk_log("overlay: shader module creation failed, disabled");
+        return 0;
+    }
+
+    VkDescriptorSetLayoutBinding b[3] = {
+        { .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+          .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT },
+        { .binding = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+          .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT },
+        { .binding = 2, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+          .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT },
+    };
+    VkDescriptorSetLayoutCreateInfo dslci = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 3, .pBindings = b,
+    };
+    if (d->next_create_dsl(dev, &dslci, NULL, &g_hud_dsl) != VK_SUCCESS) {
+        g_hud_dev_failed = 1; return 0;
+    }
+
+    VkPushConstantRange pcr = {
+        .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+        .offset = 0, .size = sizeof(GbHudPush),
+    };
+    VkPipelineLayoutCreateInfo plci = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1, .pSetLayouts = &g_hud_dsl,
+        .pushConstantRangeCount = 1, .pPushConstantRanges = &pcr,
+    };
+    if (d->next_create_player(dev, &plci, NULL, &g_hud_playout) != VK_SUCCESS) {
+        g_hud_dev_failed = 1; return 0;
+    }
+
+    VkComputePipelineCreateInfo cpci = {
+        .sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .stage  = { .sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                    .stage  = VK_SHADER_STAGE_COMPUTE_BIT,
+                    .module = g_hud_module, .pName = "main" },
+        .layout = g_hud_playout,
+    };
+    if (d->next_create_compute_pipelines(dev, VK_NULL_HANDLE, 1, &cpci, NULL,
+                                         &g_hud_pipeline) != VK_SUCCESS) {
+        g_hud_dev_failed = 1; return 0;
+    }
+
+    g_hud_dev_ready = 1;
+    gbvk_log("overlay: pipeline ready (%zu-byte shader, %ux%u cells)",
+             spv_len, (unsigned)GB_HUD_COLS, (unsigned)GB_HUD_ROWS);
+    return 1;
+}
+
+/* ── overlay: text ───────────────────────────────────────────────────── */
+
+/* Writes one left-aligned line into the cell grid. Truncates rather than
+ * wrapping: a HUD that reflows when a number gains a digit is unreadable. */
+static void gbvk_hud_line(uint32_t *cells, int row, const char *fmt, ...)
+{
+    if (row < 0 || row >= GB_HUD_ROWS) return;
+    char buf[GB_HUD_COLS + 1];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    uint32_t *dst = cells + (size_t)row * GB_HUD_COLS;
+    int i = 0;
+    for (; buf[i] && i < GB_HUD_COLS; i++)
+        dst[i] = (unsigned char)buf[i];
+    for (; i < GB_HUD_COLS; i++) dst[i] = ' ';
+}
+
+static void gbvk_hud_build_text(uint32_t *cells, int page)
+{
+    for (int i = 0; i < GB_HUD_CELLS; i++) cells[i] = ' ';
+
+    float fps, avg_ms, p1_ms;
+    gbvk_hud_tick(&fps, &avg_ms, &p1_ms);
+
+    unsigned t2_n     = (unsigned)atomic_load(&g_gbvk_t2_count);
+    unsigned long t2_b = (unsigned long)atomic_load(&g_gbvk_t2_bytes);
+
+    gbvk_hud_line(cells, 0, "GreenBoost  page %d/%d", page + 1, GB_HUD_PAGES);
+
+    if (page == 0) {
+        gbvk_hud_line(cells, 1, "%6.1f FPS   %5.2f ms avg", fps, avg_ms);
+        gbvk_hud_line(cells, 2, "worst frame in window %5.2f ms", p1_ms);
+        gbvk_hud_line(cells, 3, "T2 spill %u alloc  %lu MB",
+                      t2_n, t2_b / (1024ul * 1024ul));
+    } else if (page == 1) {
+        /* Tier detail: the thing MangoHud cannot show, because only this
+         * layer sees which allocations were redirected. */
+        gbvk_hud_line(cells, 1, "tier detail");
+        gbvk_hud_line(cells, 2, "T2 allocations  %u", t2_n);
+        gbvk_hud_line(cells, 3, "T2 bytes        %lu MB",
+                      t2_b / (1024ul * 1024ul));
+        gbvk_hud_line(cells, 4, "frames sampled  %d", g_hud_time.n);
+    } else if (page == 2) {
+        gbvk_hud_line(cells, 1, "frame time");
+        gbvk_hud_line(cells, 2, "avg   %6.2f ms", avg_ms);
+        gbvk_hud_line(cells, 3, "worst %6.2f ms", p1_ms);
+        gbvk_hud_line(cells, 4, "fps   %6.1f", fps);
+    } else {
+        gbvk_hud_line(cells, 1, "alt+F11 toggle   alt+F12 page");
+        gbvk_hud_line(cells, 2, "alt+F10 save replay");
+        gbvk_hud_line(cells, 3, "alt+F9  record   alt+F1 shot");
+    }
+}
+
+/* ── overlay: per-swapchain setup ────────────────────────────────────── */
+
+static void gbvk_hud_swap_free(GbDevData *d, GbHudSwapState *s)
+{
+    if (!s || !s->swapchain) return;
+    VkDevice dev = s->device;
+    if (d) {
+        for (uint32_t i = 0; i < s->image_count; i++) {
+            if (s->done[i] && d->next_destroy_semaphore)
+                d->next_destroy_semaphore(dev, s->done[i], NULL);
+            if (s->views[i] && d->next_destroy_image_view)
+                d->next_destroy_image_view(dev, s->views[i], NULL);
+        }
+        if (s->cmd_pool && d->next_destroy_cmd_pool)
+            d->next_destroy_cmd_pool(dev, s->cmd_pool, NULL);
+        if (s->desc_pool && d->next_destroy_desc_pool)
+            d->next_destroy_desc_pool(dev, s->desc_pool, NULL);
+        if (s->text_buf && d->next_destroy_buffer)
+            d->next_destroy_buffer(dev, s->text_buf, NULL);
+        if (s->font_buf && d->next_destroy_buffer)
+            d->next_destroy_buffer(dev, s->font_buf, NULL);
+        if (s->text_mem && d->next_free_mem) d->next_free_mem(dev, s->text_mem, NULL);
+        if (s->font_mem && d->next_free_mem) d->next_free_mem(dev, s->font_mem, NULL);
+    }
+    memset(s, 0, sizeof(*s));
+}
+
+/* Host-visible + coherent buffer. Coherent on purpose: the text is rewritten
+ * from the present thread every frame and an explicit flush there is one more
+ * thing to get wrong in the hot path. */
+static int gbvk_hud_make_buffer(GbDevData *d, VkDevice dev, VkDeviceSize size,
+                                VkBuffer *buf, VkDeviceMemory *mem, void **map)
+{
+    VkBufferCreateInfo bci = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = size, .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    };
+    if (d->next_create_buffer(dev, &bci, NULL, buf) != VK_SUCCESS) return 0;
+    VkMemoryRequirements mr;
+    d->next_get_buf_mem_req(dev, *buf, &mr);
+    uint32_t mt = nis_find_mem_type(&d->mem_props, mr.memoryTypeBits,
+                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (mt == UINT32_MAX) return 0;
+    VkMemoryAllocateInfo mai = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = mr.size, .memoryTypeIndex = mt,
+    };
+    if (d->next_alloc_mem(dev, &mai, NULL, mem) != VK_SUCCESS) return 0;
+    if (d->next_bind_buf_memory(dev, *buf, *mem, 0) != VK_SUCCESS) return 0;
+    if (map && d->next_map_memory(dev, *mem, 0, size, 0, map) != VK_SUCCESS) return 0;
+    return 1;
+}
+
+/* Build every per-swapchain object and pre-record one dispatch per image.
+ *
+ * The command buffers are recorded once. Only the TEXT changes per frame, and
+ * it lives in a host-coherent buffer the CPU rewrites before submit, so a
+ * moving number costs a memcpy rather than a re-record.
+ */
+static int gbvk_hud_swap_init(GbDevData *d, VkDevice dev, VkSwapchainKHR sc,
+                              VkFormat storage_fmt, uint32_t w, uint32_t h)
+{
+    if (!gbvk_hud_init_device(d, dev)) return 0;
+
+    pthread_mutex_lock(&g_hud_swap_mu);
+    GbHudSwapState *s = hud_state_find(sc);
+    if (s) { pthread_mutex_unlock(&g_hud_swap_mu); return s->ready; }
+    s = hud_state_alloc(sc);
+    pthread_mutex_unlock(&g_hud_swap_mu);
+    if (!s) return 0;
+
+    s->device = dev; s->width = w; s->height = h; s->storage_fmt = storage_fmt;
+
+    uint32_t n = 0;
+    if (d->next_get_swapchain_images(dev, sc, &n, NULL) != VK_SUCCESS || n == 0)
+        goto fail;
+    if (n > GBVK_MAX_SWAP_IMAGES) n = GBVK_MAX_SWAP_IMAGES;
+    VkImage images[GBVK_MAX_SWAP_IMAGES];
+    if (d->next_get_swapchain_images(dev, sc, &n, images) != VK_SUCCESS) goto fail;
+    s->image_count = n;
+
+    for (uint32_t i = 0; i < n; i++) {
+        VkImageViewCreateInfo ivci = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = images[i], .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = storage_fmt,
+            .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+        };
+        if (d->next_create_image_view(dev, &ivci, NULL, &s->views[i]) != VK_SUCCESS)
+            goto fail;
+    }
+
+    void *font_map = NULL;
+    if (!gbvk_hud_make_buffer(d, dev, sizeof(gb_hud_font),
+                              &s->font_buf, &s->font_mem, &font_map)) goto fail;
+    memcpy(font_map, gb_hud_font, sizeof(gb_hud_font));
+
+    if (!gbvk_hud_make_buffer(d, dev, GB_HUD_CELLS * sizeof(uint32_t),
+                              &s->text_buf, &s->text_mem, &s->text_map)) goto fail;
+    for (int i = 0; i < GB_HUD_CELLS; i++) ((uint32_t *)s->text_map)[i] = ' ';
+
+    VkDescriptorPoolSize ps[2] = {
+        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,  n },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, n * 2 },
+    };
+    VkDescriptorPoolCreateInfo dpci = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .maxSets = n, .poolSizeCount = 2, .pPoolSizes = ps,
+    };
+    if (d->next_create_desc_pool(dev, &dpci, NULL, &s->desc_pool) != VK_SUCCESS)
+        goto fail;
+
+    VkDescriptorSetLayout layouts[GBVK_MAX_SWAP_IMAGES];
+    for (uint32_t i = 0; i < n; i++) layouts[i] = g_hud_dsl;
+    VkDescriptorSetAllocateInfo dsai = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = s->desc_pool, .descriptorSetCount = n,
+        .pSetLayouts = layouts,
+    };
+    if (d->next_alloc_desc_sets(dev, &dsai, s->sets) != VK_SUCCESS) goto fail;
+
+    for (uint32_t i = 0; i < n; i++) {
+        VkDescriptorImageInfo  ii = { .imageView = s->views[i],
+                                      .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
+        VkDescriptorBufferInfo fb = { .buffer = s->font_buf, .range = VK_WHOLE_SIZE };
+        VkDescriptorBufferInfo tb = { .buffer = s->text_buf, .range = VK_WHOLE_SIZE };
+        VkWriteDescriptorSet w3[3] = {
+            { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = s->sets[i],
+              .dstBinding = 0, .descriptorCount = 1,
+              .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .pImageInfo = &ii },
+            { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = s->sets[i],
+              .dstBinding = 1, .descriptorCount = 1,
+              .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .pBufferInfo = &fb },
+            { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = s->sets[i],
+              .dstBinding = 2, .descriptorCount = 1,
+              .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .pBufferInfo = &tb },
+        };
+        d->next_update_desc_sets(dev, 3, w3, 0, NULL);
+    }
+
+    VkCommandPoolCreateInfo cpci = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = 0,
+    };
+    if (d->next_create_cmd_pool(dev, &cpci, NULL, &s->cmd_pool) != VK_SUCCESS) goto fail;
+    VkCommandBufferAllocateInfo cbai = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = s->cmd_pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = n,
+    };
+    if (d->next_alloc_cmd_buffers(dev, &cbai, s->cbs) != VK_SUCCESS) goto fail;
+
+    GbHudPush push = {
+        .origin = { 16, 16 },
+        .cell   = { 8 * 2, 8 * 2 },        /* 2x scale, 16px cells */
+        .grid   = { GB_HUD_COLS, GB_HUD_ROWS },
+        .fg     = { 0.62f, 0.93f, 0.36f, 1.0f },   /* GreenBoost green */
+        .bg     = { 0.02f, 0.03f, 0.02f, 0.55f },
+        .bgra   = (storage_fmt == VK_FORMAT_B8G8R8A8_UNORM ||
+                   storage_fmt == VK_FORMAT_B8G8R8A8_SRGB) ? 1 : 0,
+    };
+
+    for (uint32_t i = 0; i < n; i++) {
+        VkCommandBufferBeginInfo bbi = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+        if (d->next_begin_cmd_buffer(s->cbs[i], &bbi) != VK_SUCCESS) goto fail;
+
+        /* PRESENT_SRC -> GENERAL so the compute pass may write it, then back.
+         * srcAccessMask 0 because the acquire semaphore already orders the
+         * previous use of this image against us. */
+        VkImageMemoryBarrier to_general = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = 0,
+            .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = images[i],
+            .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+        };
+        d->next_cmd_pipeline_barrier(s->cbs[i],
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            0, 0, NULL, 0, NULL, 1, &to_general);
+
+        d->next_cmd_bind_pipeline(s->cbs[i], VK_PIPELINE_BIND_POINT_COMPUTE,
+                                  g_hud_pipeline);
+        d->next_cmd_bind_desc_sets(s->cbs[i], VK_PIPELINE_BIND_POINT_COMPUTE,
+                                   g_hud_playout, 0, 1, &s->sets[i], 0, NULL);
+        d->next_cmd_push_constants(s->cbs[i], g_hud_playout,
+                                   VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                                   sizeof(push), &push);
+        uint32_t gx = (uint32_t)((GB_HUD_COLS * push.cell[0] + 7) / 8);
+        uint32_t gy = (uint32_t)((GB_HUD_ROWS * push.cell[1] + 7) / 8);
+        d->next_cmd_dispatch(s->cbs[i], gx, gy, 1);
+
+        VkImageMemoryBarrier to_present = to_general;
+        to_present.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        to_present.dstAccessMask = 0;
+        to_present.oldLayout     = VK_IMAGE_LAYOUT_GENERAL;
+        to_present.newLayout     = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        d->next_cmd_pipeline_barrier(s->cbs[i],
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            0, 0, NULL, 0, NULL, 1, &to_present);
+
+        if (d->next_end_cmd_buffer(s->cbs[i]) != VK_SUCCESS) goto fail;
+
+        VkSemaphoreCreateInfo sci = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+        if (d->next_create_semaphore(dev, &sci, NULL, &s->done[i]) != VK_SUCCESS)
+            goto fail;
+    }
+
+    s->ready = 1;
+    gbvk_log("overlay: ready on swapchain %ux%u (%u images)", w, h, n);
+    return 1;
+
+fail:
+    gbvk_log("overlay: swapchain setup failed, overlay disabled for it");
+    gbvk_hud_swap_free(d, s);
+    return 0;
+}
+
+/* Submit the overlay pass for this present and chain its semaphore.
+ * Returns 1 when *pInfo was rewritten to wait on ours. */
+static int gbvk_hud_present(VkQueue queue, const VkPresentInfoKHR *pInfo,
+                            VkPresentInfoKHR *out, VkSemaphore *sem_store)
+{
+    if (pInfo->swapchainCount != 1) return 0;
+
+    int visible = 0, page = 0;
+    gbvk_hud_poll_control(&visible, &page);
+    if (!visible) return 0;
+
+    pthread_mutex_lock(&g_hud_swap_mu);
+    GbHudSwapState *s = hud_state_find(pInfo->pSwapchains[0]);
+    if (!s || !s->ready) { pthread_mutex_unlock(&g_hud_swap_mu); return 0; }
+    pthread_mutex_unlock(&g_hud_swap_mu);
+
+    uint32_t img = pInfo->pImageIndices[0];
+    if (img >= s->image_count) return 0;
+
+    GbDevData *d = NULL;
+    pthread_mutex_lock(&g_mutex);
+    d = dev_find(s->device);
+    pthread_mutex_unlock(&g_mutex);
+    if (!d || !d->next_queue_submit) return 0;
+
+    gbvk_hud_build_text((uint32_t *)s->text_map, page);
+
+    VkPipelineStageFlags wait_stage[16];
+    for (int i = 0; i < 16; i++) wait_stage[i] = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+
+    VkSubmitInfo si = {
+        .sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .waitSemaphoreCount   = pInfo->waitSemaphoreCount,
+        .pWaitSemaphores      = pInfo->pWaitSemaphores,
+        .pWaitDstStageMask    = wait_stage,
+        .commandBufferCount   = 1,
+        .pCommandBuffers      = &s->cbs[img],
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores    = &s->done[img],
+    };
+    if (d->next_queue_submit(queue, 1, &si, VK_NULL_HANDLE) != VK_SUCCESS)
+        return 0;
+
+    *sem_store = s->done[img];
+    *out = *pInfo;
+    out->waitSemaphoreCount = 1;
+    out->pWaitSemaphores    = sem_store;
+    return 1;
+}
+
 static VKAPI_ATTR VkResult VKAPI_CALL
 gbvk_CreateSwapchainKHR(VkDevice                        device,
                         const VkSwapchainCreateInfoKHR *pCreateInfo,
@@ -1701,11 +2314,17 @@ gbvk_CreateSwapchainKHR(VkDevice                        device,
     int want_dispatch = (d && d->nis_initialised &&
                          getenv("GREENBOOST_NIS_DISPATCH") &&
                          getenv("GREENBOOST_NIS_DISPATCH")[0] == '1');
+    /* The overlay writes the swapchain image as a storage image exactly like
+     * NIS does, so it needs the same STORAGE_BIT + mutable-format swapchain.
+     * Gating that on NIS alone is why the overlay has to ask here rather than
+     * later: image usage cannot be added after the swapchain exists. */
+    int want_hud = gbvk_hud_enabled();
+    int want_storage = want_dispatch || want_hud;
 
     VkResult r;
     VkFormat storage_fmt = pCreateInfo->imageFormat;
 
-    if (want_dispatch) {
+    if (want_storage) {
         /* NIS writes the swapchain image as a storage image.  We need:
          *   1. VK_IMAGE_USAGE_STORAGE_BIT on the swapchain images.
          *   2. VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR + a format list
@@ -1728,17 +2347,23 @@ gbvk_CreateSwapchainKHR(VkDevice                        device,
 
         r = fn(device, &sci_mod, pAllocator, pSwapchain);
         if (r != VK_SUCCESS) {
-            /* WSI doesn't support STORAGE on swapchain images , disable NIS
-             * dispatch for this swapchain and create a plain one. */
-            gbvk_log("NIS: swapchain STORAGE_BIT unsupported (VkResult %d) , "
-                     "NIS dispatch disabled for this swapchain", (int)r);
+            /* WSI doesn't support STORAGE on swapchain images , disable both
+             * post-process paths for this swapchain and create a plain one. */
+            gbvk_log("swapchain STORAGE_BIT unsupported (VkResult %d) , NIS "
+                     "dispatch and overlay disabled for this swapchain", (int)r);
             want_dispatch = 0;
+            want_hud      = 0;
             storage_fmt   = pCreateInfo->imageFormat;
             r = fn(device, pCreateInfo, pAllocator, pSwapchain);
         }
     } else {
         r = fn(device, pCreateInfo, pAllocator, pSwapchain);
     }
+
+    if (r == VK_SUCCESS && want_hud)
+        gbvk_hud_swap_init(d, device, *pSwapchain, storage_fmt,
+                           pCreateInfo->imageExtent.width,
+                           pCreateInfo->imageExtent.height);
 
     if (r == VK_SUCCESS && d && d->nis_initialised) {
         if (want_dispatch) {
@@ -1793,6 +2418,13 @@ gbvk_DestroySwapchainKHR(VkDevice                       device,
     GbNisSwapState *s = nis_state_find(swapchain);
     pthread_mutex_unlock(&g_nis_swap_mu);
     if (s && s->ready) gbvk_nis_swap_free(d, s);
+
+    /* Same ordering rule for the overlay: its image views point at swapchain
+     * images that the upstream destroy is about to invalidate. */
+    pthread_mutex_lock(&g_hud_swap_mu);
+    GbHudSwapState *hs = hud_state_find(swapchain);
+    pthread_mutex_unlock(&g_hud_swap_mu);
+    if (hs) gbvk_hud_swap_free(d, hs);
 
     if (fn) fn(device, swapchain, pAllocator);
 }
@@ -2465,6 +3097,8 @@ gbvk_CreateInstance(const VkInstanceCreateInfo  *pCreateInfo,
     PFN_vkGetPhysicalDeviceMemoryProperties2 next_props2 =
         (PFN_vkGetPhysicalDeviceMemoryProperties2)
         next_gipa(*pInstance, "vkGetPhysicalDeviceMemoryProperties2");
+    g_next_enum_dev_ext = (PFN_vkEnumerateDeviceExtensionProperties)
+        next_gipa(*pInstance, "vkEnumerateDeviceExtensionProperties");
 
     pthread_mutex_lock(&g_mutex);
     GbInstData *d = inst_alloc(*pInstance);
@@ -2588,19 +3222,178 @@ gbvk_CreateDevice(VkPhysicalDevice             physDev,
         want_priority = 0;
     }
 
+    /* PR-GGGG: enable VK_EXT_pageable_device_local_memory ourselves.
+     *
+     * Everything below in this file that lowers the priority of a T2/T3
+     * spill allocation goes through vkSetDeviceMemoryPriorityEXT, and that
+     * entry point only exists when the extension is enabled at device
+     * creation.  Enabling extensions is the *application's* call, and
+     * almost no game asks for this one , it is recent and mostly used by
+     * emulators and D3D12 translation layers.  So until now the tier
+     * priority mechanism resolved to NULL and did nothing on virtually
+     * every real title: no error, no warning, just no effect.
+     *
+     * A layer is allowed to add device extensions, so add it.  Ryujinx
+     * does the same thing for VK_EXT_external_memory_host with the
+     * "desirable INTERSECT supported" pattern, which is what this is.
+     *
+     * Three things have to be true together or this is inert again:
+     *   1. the physical device must actually support it,
+     *   2. VK_EXT_memory_priority must be enabled too , pageable depends
+     *      on it, and a device create naming only pageable is invalid,
+     *   3. VkPhysicalDevicePageableDeviceLocalMemoryFeaturesEXT must be
+     *      chained with pageableDeviceLocalMemory = VK_TRUE.  Naming the
+     *      extension without enabling the feature is exactly the silent
+     *      no-op this comment exists to stop repeating.
+     *
+     * Opt-out: GREENBOOST_VK_PAGEABLE=0
+     */
+    int want_pageable = 1;
+    {
+        const char *e = getenv("GREENBOOST_VK_PAGEABLE");
+        if (e && strcmp(e, "0") == 0) want_pageable = 0;
+    }
+
+    /* Room for the app's own list plus the two we may add. */
+    const char *ext_mod[256];
+    VkPhysicalDevicePageableDeviceLocalMemoryFeaturesEXT pageable_feat;
+    VkPhysicalDeviceMemoryPriorityFeaturesEXT            mempri_feat;
+    int injected_pageable = 0;
+
+    if (want_pageable && pCreateInfo->enabledExtensionCount + 2u <=
+                         (uint32_t)(sizeof(ext_mod) / sizeof(ext_mod[0]))) {
+        int app_has_pageable = 0, app_has_prio = 0;
+        for (uint32_t i = 0; i < pCreateInfo->enabledExtensionCount; i++) {
+            const char *e = pCreateInfo->ppEnabledExtensionNames[i];
+            if (!e) continue;
+            if (strcmp(e, VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME) == 0)
+                app_has_pageable = 1;
+            if (strcmp(e, VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME) == 0)
+                app_has_prio = 1;
+        }
+
+        if (!app_has_pageable) {
+            /* Ask the driver what it supports.  Never assume , an
+             * unsupported extension name makes vkCreateDevice fail
+             * outright, which would break the game we are trying to help. */
+            PFN_vkEnumerateDeviceExtensionProperties fn_enum = g_next_enum_dev_ext;
+            int dev_has_pageable = 0, dev_has_prio = 0;
+            if (fn_enum) {
+                uint32_t n = 0;
+                if (fn_enum(physDev, NULL, &n, NULL) == VK_SUCCESS && n) {
+                    VkExtensionProperties *props =
+                        (VkExtensionProperties *)calloc(n, sizeof(*props));
+                    if (props && fn_enum(physDev, NULL, &n, props) == VK_SUCCESS) {
+                        for (uint32_t i = 0; i < n; i++) {
+                            if (strcmp(props[i].extensionName,
+                                VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME) == 0)
+                                dev_has_pageable = 1;
+                            if (strcmp(props[i].extensionName,
+                                VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME) == 0)
+                                dev_has_prio = 1;
+                        }
+                    }
+                    free(props);
+                }
+            }
+
+            if (dev_has_pageable && (dev_has_prio || app_has_prio)) {
+                uint32_t n = 0;
+                for (; n < pCreateInfo->enabledExtensionCount; n++)
+                    ext_mod[n] = pCreateInfo->ppEnabledExtensionNames[n];
+                if (!app_has_prio)
+                    ext_mod[n++] = VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME;
+                ext_mod[n++] = VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME;
+
+                /* VUID-VkDeviceCreateInfo-pageableDeviceLocalMemory-06839:
+                 * pageableDeviceLocalMemory = TRUE requires memoryPriority =
+                 * TRUE as well.  Naming both extensions but chaining only the
+                 * pageable feature makes the driver reject the whole device
+                 * create, which is how this was caught. */
+                mempri_feat.sType =
+                    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PRIORITY_FEATURES_EXT;
+                mempri_feat.pNext = (void *)dci_mod.pNext;
+                mempri_feat.memoryPriority = VK_TRUE;
+
+                pageable_feat.sType =
+                    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PAGEABLE_DEVICE_LOCAL_MEMORY_FEATURES_EXT;
+                pageable_feat.pNext = &mempri_feat;
+                pageable_feat.pageableDeviceLocalMemory = VK_TRUE;
+
+                dci_mod.pNext                   = &pageable_feat;
+                dci_mod.ppEnabledExtensionNames = ext_mod;
+                dci_mod.enabledExtensionCount   = n;
+                injected_pageable = 1;
+                gbvk_log("CreateDevice: enabling %s%s ourselves , the app did "
+                         "not ask for it, and tier memory priority is a no-op "
+                         "without it",
+                         VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME,
+                         app_has_prio ? "" : " + " VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME);
+            } else if (!fn_enum) {
+                /* Distinguish these two.  Reporting "unsupported" when the
+                 * query never ran sends the reader to the driver, which is
+                 * the wrong place to look. */
+                gbvk_log("CreateDevice: could not query device extensions, "
+                         "tier memory priority left inactive");
+            } else if (!dev_has_pageable) {
+                gbvk_log("CreateDevice: %s not supported by this device, "
+                         "tier memory priority will be inactive",
+                         VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME);
+            } else {
+                gbvk_log("CreateDevice: %s present but %s missing, cannot "
+                         "enable pageable memory",
+                         VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME,
+                         VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME);
+            }
+        }
+    }
+
+    /* Any injection means dci_mod must be the one we submit, even when
+     * queue-priority injection was skipped. */
+    int use_mod = want_priority || injected_pageable;
+
     VkResult res = next_cd(physDev,
-                           want_priority ? &dci_mod : pCreateInfo,
+                           use_mod ? &dci_mod : pCreateInfo,
                            pAllocator, pDevice);
+
+    /* Back our additions out one at a time, cause-first.  The two are
+     * independent and a blanket "drop everything we added" retry throws away
+     * the working one: VK_ERROR_NOT_PERMITTED_KHR means the HIGH queue
+     * priority was refused (no CAP_SYS_NICE), and says nothing at all about
+     * the extensions, so dropping the extensions for it would silently lose
+     * tier memory priority on every machine that simply lacks the capability.
+     */
     if (res == VK_ERROR_NOT_PERMITTED_KHR && want_priority) {
-        /* CAP_SYS_NICE missing or driver rejects HIGH , retry passthrough. */
-        res = next_cd(physDev, pCreateInfo, pAllocator, pDevice);
+        dci_mod.pQueueCreateInfos = pCreateInfo->pQueueCreateInfos;
+        want_priority = 0;
+        use_mod = injected_pageable;
+        res = next_cd(physDev,
+                      use_mod ? &dci_mod : pCreateInfo,
+                      pAllocator, pDevice);
         if (res == VK_SUCCESS)
-            gbvk_log("CreateDevice: HIGH queue priority rejected (no CAP_SYS_NICE?), "
-                     "running at default priority");
-    } else if (res == VK_SUCCESS && want_priority) {
+            gbvk_log("CreateDevice: HIGH queue priority rejected (no "
+                     "CAP_SYS_NICE?), running at default priority");
+    }
+
+    /* Anything still failing while we are adding extensions is attributable
+     * to them; drop them and let the app have its device. */
+    if (res != VK_SUCCESS && injected_pageable) {
+        gbvk_log("CreateDevice: rejected with our extensions (VkResult %d), "
+                 "retrying without them", (int)res);
+        dci_mod.pNext                   = pCreateInfo->pNext;
+        dci_mod.ppEnabledExtensionNames = pCreateInfo->ppEnabledExtensionNames;
+        dci_mod.enabledExtensionCount   = pCreateInfo->enabledExtensionCount;
+        injected_pageable = 0;
+        use_mod = want_priority;
+        res = next_cd(physDev,
+                      use_mod ? &dci_mod : pCreateInfo,
+                      pAllocator, pDevice);
+    }
+
+    if (res == VK_SUCCESS && want_priority)
         gbvk_log("CreateDevice: HIGH global queue priority granted on %d queue family(s)",
                  n_q);
-    }
+
     if (res != VK_SUCCESS) return res;
 
     /*
@@ -2628,6 +3421,8 @@ gbvk_CreateDevice(VkPhysicalDevice             physDev,
         if (strcmp(e, "VK_NV_low_latency2") == 0)                       has_lowlat2  = 1;
         if (strcmp(e, "VK_EXT_pageable_device_local_memory") == 0)      has_pageable = 1;
     }
+    /* We may have added it above; the app's list would not show that. */
+    if (injected_pageable) has_pageable = 1;
     PFN_vkSetDeviceMemoryPriorityEXT fn_setprio = NULL;
     if (has_pageable) {
         fn_setprio = (PFN_vkSetDeviceMemoryPriorityEXT)
@@ -2698,6 +3493,7 @@ gbvk_CreateDevice(VkPhysicalDevice             physDev,
     PFN_vkCmdBindPipeline            fn_cbp   = (PFN_vkCmdBindPipeline)next_gdpa(*pDevice, "vkCmdBindPipeline");
     PFN_vkCmdBindDescriptorSets      fn_cbds  = (PFN_vkCmdBindDescriptorSets)next_gdpa(*pDevice, "vkCmdBindDescriptorSets");
     PFN_vkCmdDispatch                fn_cd    = (PFN_vkCmdDispatch)next_gdpa(*pDevice, "vkCmdDispatch");
+    PFN_vkCmdPushConstants           fn_cpush = (PFN_vkCmdPushConstants)next_gdpa(*pDevice, "vkCmdPushConstants");
     PFN_vkCreateSemaphore            fn_csem  = (PFN_vkCreateSemaphore)next_gdpa(*pDevice, "vkCreateSemaphore");
     PFN_vkDestroySemaphore           fn_dsem  = (PFN_vkDestroySemaphore)next_gdpa(*pDevice, "vkDestroySemaphore");
     PFN_vkQueueSubmit                fn_qs    = (PFN_vkQueueSubmit)next_gdpa(*pDevice, "vkQueueSubmit");
@@ -2879,6 +3675,7 @@ gbvk_CreateDevice(VkPhysicalDevice             physDev,
         d->next_cmd_bind_pipeline          = fn_cbp;
         d->next_cmd_bind_desc_sets         = fn_cbds;
         d->next_cmd_dispatch               = fn_cd;
+        d->next_cmd_push_constants         = fn_cpush;
         d->next_create_semaphore           = fn_csem;
         d->next_destroy_semaphore          = fn_dsem;
         d->next_queue_submit               = fn_qs;
@@ -3556,6 +4353,14 @@ gbvk_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *pPresentInfo)
         if (gbvk_nis_dispatch_present_v2(queue, pPresentInfo, &rewrite))
             forward = &rewrite.info;
     }
+
+    /* Overlay pass. Chained AFTER any NIS rewrite so it draws on top of the
+     * sharpened image rather than being sharpened itself, and so it waits on
+     * NIS's semaphore instead of the acquire semaphore NIS already consumed. */
+    VkPresentInfoKHR hud_info;
+    VkSemaphore      hud_sem = VK_NULL_HANDLE;
+    if (gbvk_hud_present(queue, forward, &hud_info, &hud_sem))
+        forward = &hud_info;
 
     /* A7: PRESENT_START marker , tells the driver the CPU is about to submit
      * the present; driver uses this with SIMULATION_START to measure latency. */

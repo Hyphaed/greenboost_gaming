@@ -2962,7 +2962,21 @@ pub fn launch_game_ext(appid: &str, disable_secondary_displays: bool)
     // as a path or shell metacharacter.
     let id: u64 = appid.parse()
         .map_err(|_| format!("invalid appid: {appid:?} (must be a positive integer)"))?;
-    let url = format!("steam://rungameid/{id}");
+
+    // A non-Steam shortcut is launched by its 64-bit gameid, never by the
+    // 32-bit appid we key everything else on , see the comment on
+    // `shortcut_run_game_id`. The appid stays the identity for the compat
+    // tool mapping, the launch status and the session record; only the id we
+    // hand Steam changes.
+    let is_shortcut = u32::try_from(id).ok()
+        .map(crate::nonsteam::is_shortcut_appid)
+        .unwrap_or(false);
+    let run_id = if is_shortcut {
+        crate::nonsteam::shortcut_run_game_id(id as u32)
+    } else {
+        id
+    };
+    let url = format!("steam://rungameid/{run_id}");
 
     let mut prep_notes: Vec<String> = Vec::new();
     if let Some(note) = ensure_greenboost_proton_mapping(&id.to_string()) {
@@ -3011,11 +3025,17 @@ pub fn launch_game_ext(appid: &str, disable_secondary_displays: bool)
     // leaves the window alone.  The URL stays as the fallback for setups
     // where the `steam` binary isn't on PATH (Flatpak, mostly).
     let id_s = id.to_string();
-    let attempts: [Vec<&str>; 3] = [
-        vec!["steam",    "-applaunch", &id_s],
-        vec!["steam",    &url],
-        vec!["xdg-open", &url],
-    ];
+    // `-applaunch` takes a Steam appid and nothing else. Given a shortcut's
+    // appid it returns 0, logs nothing, and launches nothing (measured
+    // 2026-08-22), so for a shortcut it is not a first attempt , it is a
+    // silent success that consumes the launch and leaves the user watching a
+    // progress counter for a game Steam was never asked to start.
+    let mut attempts: Vec<Vec<&str>> = Vec::new();
+    if !is_shortcut {
+        attempts.push(vec!["steam", "-applaunch", &id_s]);
+    }
+    attempts.push(vec!["steam", &url]);
+    attempts.push(vec!["xdg-open", &url]);
     // SPAWN, never `.status()`.
     //
     // 2026-08-21: this loop used `.status()`, which waits for the child to
