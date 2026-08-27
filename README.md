@@ -1,6 +1,6 @@
 # GreenBoost Gaming Suite
 
-**Status: Alpha / early Beta** , it works on my machine, and that's about as
+**Status: Beta** , it works on my machine, and that's about as
 far as the evidence goes.
 **Author:** Ferran Duarri · **License:** GPL v2 (see `LICENSE`)
 
