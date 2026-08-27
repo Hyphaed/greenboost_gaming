@@ -165,6 +165,11 @@ export interface GameOverrides {
   perf_lock:         boolean | null;
   compositor_suspend: boolean | null;
   vk_pipeline_cache: boolean | null;
+  /** Symlink external_dll_dir's *.dll files into the game's exe directory
+   *  at launch. GreenBoost never downloads, extracts, or redistributes
+   *  anything placed there , the user supplies and is responsible for it. */
+  external_dlls_enabled: boolean;
+  external_dll_dir:  string;
 }
 
 export interface GlobalSettingsState {
@@ -264,4 +269,4 @@ export type LaunchStatus =
   | { state: "idle" }
   | { state: "pending"; appid: string; elapsed_s: number; phase: string; eta_s: number }
   | { state: "started"; appid: string }
-  | { state: "failed";  appid: string; log: string[] };
+  | { state: "failed";  appid: string; log: string[]; stuck_reason?: string | null };

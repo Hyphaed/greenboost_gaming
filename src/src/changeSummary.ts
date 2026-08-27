@@ -64,6 +64,8 @@ const GAME_FIELD_LABEL: Partial<Record<keyof GameOverrides, string>> = {
   gpu_profile:        "GPU Profile",
   nis:                "NIS (NVIDIA Image Scaling)",
   wrappers:           "Launch wrappers",
+  external_dlls_enabled: "Use external DLL folder",
+  external_dll_dir:   "External DLL folder",
 };
 
 const DLSS_PRESET_LABEL: Record<string, string> = {

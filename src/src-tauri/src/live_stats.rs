@@ -111,13 +111,30 @@ fn sync_gb_gaming_mode(running: bool) {
 /// from the game by process name, prefix or appid. Only the command line says
 /// which is which.
 ///
+/// `steam.exe` is a different case in the SAME family: it isn't a separate
+/// pre-launch compat-tool invocation, it's Steamworks' own in-prefix
+/// DRM/ownership-check bootstrap, spawned as a CHILD of the real launch
+/// (`waitforexitandrun ...ff7rebirth.exe` starts it internally). But the
+/// practical problem is identical , its wine preloader is, for a moment,
+/// indistinguishable from the game by process name, and if this poll
+/// catches it in that window it reads as "the game is running" forever
+/// after (the caller only re-scans for exit, not for "was this actually
+/// the game"). Confirmed live 2026-08-27: multiple titles (FINAL FANTASY
+/// VII REBIRTH, 007 First Light) showed Running in Steam's own UI for 45+
+/// minutes with no game window and no GreenBoost error, because `steam.exe`
+/// itself was hung , not the game, not GreenBoost, not this compat tool ,
+/// and nothing here was watching to notice the real executable never
+/// followed it.
+///
 /// Accepting one of these as "the game is running" reports a launch as
 /// succeeded while Steam is still deciding whether to start it , the exact
 /// failure LaunchStatus exists to prevent , and flips `gaming_mode` on for a
-/// script evaluator. The wrapper keeps GreenBoost out of those invocations
-/// (`_steam_internal_helper` in gb_proton_main.py); this keeps them out of the
-/// Suite's idea of a running game. Same list, same reason.
-const STEAM_INTERNAL_EXES: [&str; 7] = [
+/// script evaluator. The wrapper keeps GreenBoost out of the pre-launch
+/// helpers (`_steam_internal_helper` in gb_proton_main.py, which does NOT
+/// list steam.exe , it's the real launch and should get full GreenBoost
+/// treatment); this list is narrower and just keeps them out of the Suite's
+/// idea of a running game.
+const STEAM_INTERNAL_EXES: [&str; 8] = [
     "iscriptevaluator.exe",
     "d3ddriverquery.exe",
     "d3ddriverquery64.exe",
@@ -125,7 +142,34 @@ const STEAM_INTERNAL_EXES: [&str; 7] = [
     "steamerrorreporter.exe",
     "steamerrorreporter64.exe",
     "gameoverlayui.exe",
+    "steam.exe",
 ];
+
+/// Exactly the `steam.exe` case documented on `STEAM_INTERNAL_EXES` above ,
+/// split out so a caller can tell "nothing ran at all" apart from "Steam's
+/// own DRM/ownership bootstrap ran and never handed off to the real game",
+/// which is a different, nameable failure (`LaunchStatus::Failed`'s
+/// `stuck_reason`) rather than a generic timeout.
+fn is_steam_drm_bootstrap(pid: &str) -> bool {
+    let Ok(raw) = std::fs::read(format!("/proc/{pid}/cmdline")) else { return false };
+    String::from_utf8_lossy(&raw).replace('\0', " ").to_ascii_lowercase().contains("steam.exe")
+}
+
+/// Is `steam.exe` (Steamworks' in-prefix DRM/ownership-check bootstrap)
+/// currently running anywhere on the system? Best-effort, used only to
+/// build a human-readable "stuck on Steam's own DRM check" message , a
+/// false positive here just makes that message slightly less specific, it
+/// never blocks or delays real detection.
+pub fn drm_bootstrap_running() -> bool {
+    let Ok(entries) = std::fs::read_dir("/proc") else { return false };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.parse::<u32>().is_err() { continue; }
+        if is_steam_drm_bootstrap(&name) { return true; }
+    }
+    false
+}
 
 fn is_steam_internal_helper(pid: &str) -> bool {
     let Ok(raw) = std::fs::read(format!("/proc/{pid}/cmdline")) else {
@@ -142,6 +186,40 @@ fn is_steam_internal_helper(pid: &str) -> bool {
         || cmdline.contains("/legacycompat/")
 }
 
+/// Steam's own systemd scope names a launched game directly: on setups where
+/// the client places games in one, the scope is
+/// `app-steam-app<appid>-<reaperpid>.scope`. Reading it is immune to the
+/// whole comm-name/cmdline guessing game above , it doesn't matter what the
+/// process is called or whether it's still under a wine64-preloader comm,
+/// the scope says "this IS Steam appid N" directly.
+///
+/// Ported from gamescope's `GetAppIdFromCgroup()`
+/// (ValveSoftware/gamescope@565397f, `Utils/Process.cpp`), which replaced
+/// exactly the process-tree-walking approach this file otherwise uses, for
+/// exactly this reason. That commit's own message is explicit that the old
+/// walk "remains as a fallback... for cases where the Steam client doesn't
+/// put games it launches in a scope cgroup (currently the case on
+/// desktop)" , confirmed true on THIS machine (2026-08-27): a live launch's
+/// reaper sat under `app-gnome-com.ferran.greenboost-gaming-suite-*.scope`,
+/// a GNOME app-launch scope, not a Steam one. So this is genuinely inert
+/// here today; it's included as the free, correct fast path for setups
+/// where it does apply (Steam Deck / gamescope sessions, or a future
+/// desktop Steam that adopts it), with the existing exclusion-list walk
+/// staying the real mechanism on this deployment , same layering Valve's
+/// own commit uses, not a replacement for it.
+fn appid_from_cgroup_scope(pid: &str) -> Option<u32> {
+    let text = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()?;
+    for line in text.lines() {
+        let scope = line.rsplit('/').next()?;
+        let rest = scope.strip_prefix("app-steam-app")?;
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if !digits.is_empty() {
+            return digits.parse().ok();
+        }
+    }
+    None
+}
+
 pub fn find_game_pid_impl() -> Option<u32> {
     let entries = std::fs::read_dir("/proc").ok()?;
     for entry in entries.flatten() {
@@ -149,6 +227,15 @@ pub fn find_game_pid_impl() -> Option<u32> {
         let name = fname.to_string_lossy();
         if name.parse::<u32>().is_err() {
             continue;
+        }
+        // Fast path: a Steam app-scope cgroup names the game directly, no
+        // comm/cmdline guessing needed. See appid_from_cgroup_scope's doc ,
+        // inert on today's known deployment, real on others.
+        if appid_from_cgroup_scope(&name).is_some() {
+            if let Ok(pid) = name.parse::<u32>() {
+                sync_gb_gaming_mode(true);
+                return Some(pid);
+            }
         }
         let comm_path = entry.path().join("comm");
         if let Ok(comm) = std::fs::read_to_string(&comm_path) {

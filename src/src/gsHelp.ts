@@ -263,6 +263,17 @@ export const GS_INFO: Record<string, string> = {
     + "override, frame limiting, HDR passthrough) , most players never "
     + "need this; it's for forcing a specific resolution or refresh rate "
     + "a game itself won't let you set.",
+  "External DLL folder":
+    "GreenBoost never downloads, extracts, or redistributes anything here , "
+    + "it only makes files you already have findable by the game. Point "
+    + "this at a folder you've already filled with DLLs you obtained "
+    + "yourself (a mod, a debug build, files you downloaded by hand) and "
+    + "have the rights to use; GreenBoost makes no assumption about their "
+    + "provenance or licensing. At launch, each .dll in that folder is "
+    + "symlinked into the game's own folder; any file the game already "
+    + "ships under the same name is backed up first and restored when the "
+    + "game closes. A folder that doesn't exist, or has no .dll files in "
+    + "it, is skipped , the game still launches normally.",
 };
 
 // Short, honest, one-line "why you'd want this on" phrases , row()'s 4th

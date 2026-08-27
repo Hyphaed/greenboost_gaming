@@ -296,7 +296,8 @@ Core file: `greenboost_proton/proton` , 1 687-LOC Python program.
 
 | Feature | Detail |
 |---|---|
-| Per-game JSON profiles | `~/.config/greenboost-gaming/per-game/<AppID>.json` , keys: `env`, `nis`, `hdr`, `fps_cap`, `wrappers`, `hooks` |
+| Per-game JSON profiles | `~/.config/greenboost-gaming/per-game/<AppID>.json` , keys: `env`, `nis`, `hdr`, `fps_cap`, `wrappers`, `hooks`, `external_dlls_enabled`, `external_dll_dir` |
+| External DLL overlay | `external_dll_dir`'s `*.dll` files symlinked into the game's exe directory at launch (collisions backed up, restored on exit); mechanism only , GreenBoost never supplies the files, see `GREENBOOST_PROTON.md` |
 | Pre/post hooks | `~/.config/greenboost-gaming/hooks/{pre,post}.d/*.sh` , 30 s timeout, `STEAM_APPID` + `GREENBOOST_GAME_NAME` in env |
 | Wrapper chain | `gamemoderun` → `gamescope` → `mangohud` prepended to argv per profile |
 | SIGUSR1 stats harvest | Scrapes wine64-preloader descendants + journald; dumps to stdout within ~1 s |

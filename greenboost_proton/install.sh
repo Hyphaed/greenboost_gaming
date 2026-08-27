@@ -91,23 +91,51 @@ done
 # ── Syntax gate , the wrapper must parse on the interpreter that RUNS it ────
 #
 # Steam does not run the compat tool with the host python3.  toolmanifest.vdf
-# declares `require_tool_appid 1628350`, so the wrapper executes inside the
-# Steam Linux Runtime ("sniper") container, whose /usr/bin/python3 is 3.9.2.
-# A host running 3.12+ will happily `py_compile` syntax that container Python
-# cannot read, and the failure only appears at launch time as a game that
-# starts and stops within a second.
+# declares `require_tool_appid 4183110`, so the wrapper executes inside the
+# Steam Linux Runtime 4.0 container, whose /usr/bin/python3 is 3.13. That
+# appid changed 2026-08-27 from Steam Linux Runtime 3.0 ("sniper", appid
+# 1628350, python3.9.2) after a stale manifest was found to have every launch
+# running in a DIFFERENT container than the one upstream Proton 11.0 actually
+# requires , sniper's own pressure-vessel-wrap had an intermittent internal
+# fault on the machine that found this, and every launch hung indefinitely at
+# Steamworks' in-prefix DRM bootstrap as a result. See gb_proton_main.py's
+# module docstring for the full diagnosis.
+#
+# The wrapper's own coding floor stays 3.9 regardless (see gb_proton_main.py)
+# , older syntax parses fine on a newer interpreter, so this check still
+# catches anything past that floor. A host running 3.12+ will happily
+# `py_compile` syntax that a real 3.9-safe check would reject, and the
+# failure only appears at launch time as a game that starts and stops within
+# a second.
 #
 # Confirmed live 2026-08-20: a PEP 701 f-string took down every launch with
 # "SyntaxError: EOL while scanning string literal" while the same file
 # compiled cleanly on the 3.14 host.  Nothing checked, so it shipped.
 #
-# Preference order is "closest to the truth first": the real container, then
-# any old interpreter on PATH, then the host with an explicit admission that
-# the real check did not happen.
+# Preference order is "closest to the truth first": the real container
+# (Runtime 4.0's own python3.13, then sniper's as a second real-container
+# fallback), then any old interpreter on PATH, then the host with an
+# explicit admission that the real check did not happen.
 GB_MIN_PY_DESC=""
 gb_syntax_gate() {
-    local sniper runner py
+    local rt4 sniper runner py
     local -a files=( "$SCRIPT_DIR/proton" "$SCRIPT_DIR/gb_proton_main.py" )
+
+    for ROOT in "${CANDIDATE_ROOTS[@]}"; do
+        rt4=$(find "$ROOT/steamapps/common/SteamLinuxRuntime_4" \
+            -maxdepth 3 -path "*/files/bin/python3.*" -type f 2>/dev/null \
+            | grep -v '\-config$' | head -1)
+        if [[ -n "$rt4" && -x "$rt4" ]]; then
+            runner="$rt4"
+            GB_MIN_PY_DESC="Steam Linux Runtime 4.0's own python3"
+            break
+        fi
+    done
+
+    if [[ -n "${runner:-}" ]]; then
+        "$runner" -m py_compile "${files[@]}"
+        return $?
+    fi
 
     for ROOT in "${CANDIDATE_ROOTS[@]}"; do
         sniper="$ROOT/steamapps/common/SteamLinuxRuntime_sniper/run-in-sniper"
@@ -118,7 +146,7 @@ gb_syntax_gate() {
     done
 
     if [[ -n "${runner:-}" ]]; then
-        GB_MIN_PY_DESC="Steam's sniper runtime python3"
+        GB_MIN_PY_DESC="Steam's sniper runtime python3 (Runtime 4.0 not found)"
         "$runner" -- python3 -m py_compile "${files[@]}"
         return $?
     fi

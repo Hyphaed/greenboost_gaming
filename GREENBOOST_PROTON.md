@@ -71,9 +71,46 @@ Some games are incompatible with specific VKD3D options. The wrapper applies the
 
 | AppID | Game | Override |
 |-------|------|----------|
-| 2358720 | Black Myth: Wukong | DXR disabled , NULL pointer crash in `d3d12core.dll` with `dxr`/`dxr11` active |
+| 3764200 | Resident Evil 9: Requiem | DXR disabled , DirectStorage init fails with DXR active |
 
-Add entries to `_NO_DXR_GAMES` in `proton` for other games with DXR crashes.
+Add entries to `_NO_DXR_GAMES` in `gb_proton_main.py` (not `proton` , see "Put features in gb_proton_main.py, not here" in the top-level CLAUDE.md) for other games with DXR crashes.
+
+### 3a. User-supplied external DLL folder
+
+A per-game JSON profile can set `external_dlls_enabled: true` and
+`external_dll_dir: "/path/to/your/dlls"`. **GreenBoost never downloads,
+extracts, bundles, or redistributes anything in that folder.** The user is
+responsible for obtaining the files and for having the rights to use them;
+GreenBoost makes no assumption about their provenance or licensing. This is
+a generic, vendor-neutral mechanism , it works for a Streamline/DLSS bundle
+you downloaded by hand, a ReShade/mod DLL set, a debug build, or any other
+locally-supplied `.dll` set. It does not know or care which.
+
+No environment variable can inject a Unix directory into the Windows DLL
+search order , `WINEPATH` is not read by Wine (confirmed against a real
+Proton Experimental build: the string appears in zero Wine binaries), and
+`WINEDLLPATH` only covers Wine's own builtin `.so` modules, not native PE
+DLLs. Since a game's own executable directory is the first place Windows
+looks for a DLL by name, that is the only placement that actually works for
+a game that ships its own copy of the same DLL name.
+
+At launch, `_external_dll_plan()` / `_apply_external_dll_overlay()`
+(`gb_proton_main.py`) symlink each `*.dll` from the configured folder into
+the game's exe directory. Any DLL the game already ships under that name is
+renamed to `<name>.dll.gb_bak` first, never overwritten. On exit,
+`_revert_external_dll_overlay()` removes the symlinks and restores the
+backups , this runs from the wrapper's existing `finally:` block, so it
+fires on a normal exit, on Ctrl+C, and after the Suite signals a stop.
+
+A missing or empty folder, a disabled toggle, or a read-only game directory
+all degrade to a normal launch with no overlay , never a blocked launch.
+
+Two limitations worth knowing:
+- Steam's **Verify integrity of game files**, run while a session is active,
+  will see symlinks where it expects files and may replace them.
+- The overlay only covers DLLs the game loads by name from its own exe
+  directory. A DLL a game loads from a subdirectory, or by an absolute path
+  elsewhere, is unaffected.
 
 ### 4. Starts/stops the GreenBoost gaming service
 
@@ -93,7 +130,7 @@ Proton Experimental's install path is detected at runtime from `STEAM_COMPAT_CLI
 ## Architecture
 
 ```
-Steam → SteamLinuxRuntime Sniper (container)
+Steam → SteamLinuxRuntime 4.0 (container, appid 4183110)
            └─ greenboost-proton/proton             ← GreenBoost wrapper (this script)
                 ├─ _detect_nvidia()                auto-detect GPU, VRAM, RT support
                 ├─ _detect_cpu()                   auto-detect P-cores, model

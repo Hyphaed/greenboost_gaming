@@ -71,6 +71,16 @@ pub struct GameOverrides {
     /// Override GREENBOOST_VK_PIPELINE_CACHE for this game. None = use global.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vk_pipeline_cache: Option<bool>,
+    /// Overlay a user-supplied directory of DLLs into the game's own exe
+    /// directory at launch (symlinked, with any colliding shipped DLL backed
+    /// up and restored on exit). GreenBoost never downloads, extracts, or
+    /// redistributes anything placed there , the user is responsible for
+    /// obtaining the files and has the rights to use them.
+    #[serde(default)]
+    pub external_dlls_enabled: bool,
+    /// Directory the overlay above reads from; "" = unset.
+    #[serde(default)]
+    pub external_dll_dir: String,
 }
 
 fn per_game_path(appid: &str) -> PathBuf {

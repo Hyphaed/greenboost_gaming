@@ -52,6 +52,16 @@
   min-width: 0;
 }
 .gs-row-title {
+  /* The InfoTip "(i)" icon and the GreenBoost badge sit inline after the
+     title text. vertical-align:middle on an inline-flex icon box is not
+     reliable relative to surrounding text (the offset is measured against
+     the font's x-height, not the visual glyph center, and drifts with
+     line-height) , flex + align-items:center centers by box height
+     instead, which is what "vertically centered with the text" actually
+     needs. A single-line title with no icon renders identically either way. */
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   color: #e6e6e6;
   font-size: 14px;
   font-weight: 500;

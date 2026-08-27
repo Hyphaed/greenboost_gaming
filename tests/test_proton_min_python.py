@@ -3,8 +3,18 @@
 """The Proton wrapper must parse on the interpreter that actually runs it.
 
 Steam does not execute the compat tool with the host python3.  toolmanifest.vdf
-declares `require_tool_appid 1628350`, so the wrapper runs inside the Steam
-Linux Runtime ("sniper") container, whose /usr/bin/python3 is 3.9.2.
+declares `require_tool_appid 4183110`, so the wrapper runs inside the Steam
+Linux Runtime 4.0 container, whose /usr/bin/python3 is 3.13.
+
+That appid changed 2026-08-27 from Steam Linux Runtime 3.0 ("sniper", appid
+1628350, python3.9.2): a stale manifest had every launch running in a
+DIFFERENT container than the one upstream Proton 11.0 actually requires,
+and sniper's own pressure-vessel-wrap had an intermittent internal fault on
+the machine that found this , every launch hung indefinitely at Steamworks'
+in-prefix DRM bootstrap as a result. See gb_proton_main.py's module
+docstring for the full diagnosis. The wrapper's own coding floor stays
+3.9 regardless (older syntax parses fine on 3.13), so this gate still
+checks against that floor , it just prefers the real container first.
 
 That gap is not academic.  On 2026-08-20 a PEP 701 f-string in the wrapper
 compiled cleanly under the 3.14 host and took down every single launch with
@@ -44,7 +54,23 @@ STEAM_ROOTS = [
 FALLBACK_INTERPRETERS = ["python3.9", "python3.10", "python3.11"]
 
 
+def _runtime4_python() -> list[str] | None:
+    """The real container's own python3.13 , preferred, matches production."""
+    for root in STEAM_ROOTS:
+        base = root / "steamapps/common/SteamLinuxRuntime_4"
+        if not base.is_dir():
+            continue
+        for candidate in sorted(base.glob("*/files/bin/python3.*")):
+            if candidate.name.endswith("-config") or not candidate.is_file():
+                continue
+            if shutil.which(str(candidate)):
+                return [str(candidate)]
+    return None
+
+
 def _sniper_runner() -> list[str] | None:
+    """Second real-container fallback , still a genuine old interpreter,
+    just not the one Steam actually uses for this wrapper any more."""
     for root in STEAM_ROOTS:
         runner = root / "steamapps/common/SteamLinuxRuntime_sniper/run-in-sniper"
         if runner.is_file() and shutil.which(str(runner)):
@@ -61,7 +87,7 @@ def _old_interpreter() -> list[str] | None:
 
 
 def _gate() -> list[str] | None:
-    return _sniper_runner() or _old_interpreter()
+    return _runtime4_python() or _sniper_runner() or _old_interpreter()
 
 
 @pytest.mark.parametrize("path", WRAPPER_FILES, ids=lambda p: p.name)

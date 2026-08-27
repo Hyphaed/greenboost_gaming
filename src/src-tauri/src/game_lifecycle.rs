@@ -55,7 +55,14 @@ pub enum LaunchStatus {
     Started { appid: String },
     /// No game process ever appeared. `log` carries the tail of the wrapper's
     /// own log so the reason is on screen instead of in journalctl.
-    Failed  { appid: String, log: Vec<String> },
+    ///
+    /// `stuck_reason` names a SPECIFIC, recognized failure shape when one was
+    /// detected, distinct from "nothing ran at all" , currently only
+    /// `"drm_check"`: Steamworks' own in-prefix `steam.exe` bootstrap ran (as
+    /// a child of the real, fully-GreenBoost-wrapped launch) and never handed
+    /// off to the game. `None` covers every other failure, including the
+    /// pre-launch-helper case already described in `log`.
+    Failed  { appid: String, log: Vec<String>, stuck_reason: Option<String> },
 }
 
 static LAUNCH_STATUS: Mutex<Option<LaunchStatus>> = Mutex::new(None);
@@ -161,7 +168,13 @@ pub fn note_launch_started(appid: &str) {
     set_status(LaunchStatus::Started { appid: appid.to_string() });
 }
 
-pub fn note_launch_failed(appid: &str) {
+/// `saw_drm_bootstrap`: did the caller's own poll loop ever see Steamworks'
+/// in-prefix `steam.exe` running for this launch? That process is a CHILD of
+/// the real launch (GreenBoost's wrapper fully instruments it), so its own
+/// log is never empty the way a pre-launch-helper failure's log is , the
+/// distinct failure shape has to come from the caller's process-level view,
+/// not from the wrapper log.
+pub fn note_launch_failed(appid: &str, saw_drm_bootstrap: bool) {
     // Only this launch's lines. An older session's tail shown as the reason
     // sends the reader after a problem that was already over.
     let mut log = if wrapper_log_is_current(appid) {
@@ -184,7 +197,26 @@ pub fn note_launch_failed(appid: &str) {
             }
         }
     }
-    set_status(LaunchStatus::Failed { appid: appid.to_string(), log });
+    let stuck_reason = if saw_drm_bootstrap {
+        log.push(
+            "Steam's own DRM/ownership check (steam.exe, inside the prefix) ran \
+             and never handed off to the game , not GreenBoost, not this compat \
+             tool, not the game itself. \"Fix Stuck Launch\" clears the wedged \
+             process tree so Steam will accept another attempt. If it keeps \
+             happening across different games, verify the integrity of \"Steam \
+             Linux Runtime - sniper\" from Steam's own Tools list.".to_string());
+        Some("drm_check".to_string())
+    } else {
+        None
+    };
+    set_status(LaunchStatus::Failed { appid: appid.to_string(), log, stuck_reason });
+}
+
+/// Drop back to Idle after a stuck launch's tree has been cleared , without
+/// this the view would keep showing the stale Failed message and button
+/// until the next launch attempt overwrote it.
+pub fn reset_launch_status() {
+    set_status(LaunchStatus::Idle);
 }
 
 pub fn launch_status() -> LaunchStatus {

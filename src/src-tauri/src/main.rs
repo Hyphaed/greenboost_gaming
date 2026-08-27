@@ -313,6 +313,22 @@ fn game_session_active() -> bool {
     crate::game_lifecycle::has_live_session()
 }
 
+/// Clear a launch that never got past Steam's own DRM/ownership check ,
+/// offered as the "Fix Stuck Launch" button on `LaunchStatus::Failed`'s
+/// `stuck_reason == "drm_check"` case. Mechanically this IS a stop (same
+/// `stop_game_impl` the tray and quit-handler use): there is nothing to
+/// save and nothing playing, just a wedged pre-launch child tree (steam.exe
+/// + wine infrastructure) that needs clearing so Steam will accept another
+/// attempt without a full client restart. `appid` defaults to whatever this
+/// Suite last launched, same convention as `stop_game`.
+#[tauri::command]
+fn fix_stuck_launch(appid: Option<String>) -> Result<crate::game_lifecycle::StopReport, String> {
+    std::env::set_var("GB_STOP_REASON", "stuck_launch_fix");
+    let report = crate::game_lifecycle::stop_game_impl(appid, 5.0)?;
+    crate::game_lifecycle::reset_launch_status();
+    Ok(report)
+}
+
 #[tauri::command]
 fn apply_display_enabled(name: String, enabled: bool)
     -> Result<String, String>
@@ -787,11 +803,32 @@ fn close_hides_to_tray() -> bool {
 
 /// Stop the game on the way out, when the user asked for Steam-like
 /// behaviour. Best-effort: a failure here must never block the exit.
+///
+/// Gated on `LaunchStatus::Started` , a session record exists (and this
+/// function's target, `stop_game_impl`, would happily kill it) from the
+/// moment the wrapper starts, which is well before the real game process
+/// exists. Steam's own pre-launch helpers (`d3ddriverquery64.exe`,
+/// `iscriptevaluator.exe`, ...) go through the exact same wrapper and write
+/// the exact same session record while Steam decides whether to start the
+/// game at all. Closing the Suite during that window used to kill the
+/// helper's process tree, which reads to Steam as the whole launch dying and
+/// makes it retry from scratch , exactly the "Launch does nothing" loop this
+/// guard exists to stop. `LaunchStatus` already tells the two apart (see
+/// `is_steam_internal_helper` in live_stats.rs, which the watcher behind
+/// `LaunchStatus::Started` already applies), so use it rather than
+/// re-deriving the distinction here.
 fn stop_game_if_configured() {
     let wants_stop = crate::global_settings::get_impl()
         .map(|s| s.stop_game_on_quit)
         .unwrap_or(true);
     if !wants_stop {
+        return;
+    }
+    if !matches!(crate::game_lifecycle::launch_status(),
+                 crate::game_lifecycle::LaunchStatus::Started { .. }) {
+        eprintln!("[greenboost-gaming] no game has actually started yet , \
+                    leaving Steam's own launch/prefix setup alone rather than \
+                    killing it on Suite quit.");
         return;
     }
     std::env::set_var("GB_STOP_REASON", "suite_quit");
@@ -1014,6 +1051,7 @@ fn main() {
             get_session_history,
             analyze_game_sessions,
             stop_game,
+            fix_stuck_launch,
             game_session_active,
         ])
         .run(tauri::generate_context!())

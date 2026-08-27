@@ -4052,7 +4052,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-app"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "glob",
  "libloading 0.8.9",

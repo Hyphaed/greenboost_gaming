@@ -34,6 +34,7 @@
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>   /* strncasecmp() , see gbvk_detect_is_game() */
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdatomic.h>
@@ -231,6 +232,89 @@ static int gbvk_dev_fd(void)
 {
     pthread_once(&g_gbvk_dev_once, gbvk_open_dev);
     return g_gbvk_dev_fd;
+}
+
+/* ── Process-identity gate: is this process the actual game? ───────────
+ *
+ * VK_ADD_IMPLICIT_LAYER_PATH is prefix-wide, so this library loads into
+ * EVERY Vulkan-capable process Proton starts in the Wine prefix , not just
+ * the game. That was silently true from day one and harmless for most of
+ * what this file does (queue-priority boosts, logging), but not for VRAM
+ * inflation: inflate_heaps()/inflate_budget() report a virtual pool far
+ * larger than physical VRAM to any caller, and one of those callers is
+ * Proton's in-prefix `steam.exe` , Steamworks' own DRM / hardware-survey
+ * client, not the game.
+ *
+ * Real incident, 2026-08-27: Final Fantasy VII Rebirth hung indefinitely
+ * inside that steam.exe stage, before the game exe ever launched. A/B'd on
+ * the real path: every Proton/Wine sync-and-scheduling knob the wrapper
+ * sets was ruled out one at a time (still hung with all of them off); only
+ * GREENBOOST_VULKAN_DISABLE=1 (which stops this whole library from doing
+ * anything, in every process) fixed it. vulkan-layer.log showed exactly one
+ * CreateInstance from an app identifying as 'unknown' at the hang point,
+ * then nothing , consistent with Steamworks' own survey code choking on a
+ * card that suddenly claims 4x its physical VRAM, not with a lock or a
+ * crash in this library itself.
+ *
+ * The fix: only the process that IS the game gets the inflated numbers.
+ * gb_proton_main.py now exports GREENBOOST_GAME_EXE with the basename of
+ * the exe it is about to launch (it already knows this , same argv it
+ * hands to Proton). Every other process in the prefix , steam.exe,
+ * explorer.exe, svchost.exe, winedevice.exe, plugplay.exe , sees real,
+ * unmodified GPU properties, exactly as if this layer were not loaded at
+ * all for them.
+ *
+ * Match against /proc/self/comm rather than argv[0]: Wine sets the Linux
+ * process comm to the Windows exe's basename (confirmed live , `steam.exe`,
+ * `explorer.exe`, `svchost.exe` all show up verbatim in `ps` and in each
+ * process's own /proc/self/comm), and comm is what is actually stable
+ * across however this process was spawned. comm is TASK_COMM_LEN=16 bytes
+ * (15 visible + NUL), so long exe names get silently truncated by the
+ * kernel , compare only the overlap, case-insensitively (Windows filesystem
+ * semantics), not full equality.
+ *
+ * If GREENBOOST_GAME_EXE is unset (a caller that isn't this wrapper, or a
+ * game launched some other way), default to the OLD prefix-wide behaviour
+ * , this gate narrows an already-existing capability, it must never turn
+ * inflation off entirely for setups that predate this env var. */
+static int g_gbvk_is_game = 1;   /* fail open: unset env var → old behaviour */
+static pthread_once_t g_gbvk_is_game_once = PTHREAD_ONCE_INIT;
+
+static void gbvk_detect_is_game(void)
+{
+    const char *want = getenv("GREENBOOST_GAME_EXE");
+    if (!want || !want[0])
+        return;                 /* g_gbvk_is_game stays 1 , see comment above */
+
+    char comm[64] = {0};
+    int fd = open("/proc/self/comm", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        g_gbvk_is_game = 1;      /* can't tell , fail open, not closed */
+        return;
+    }
+    ssize_t n = read(fd, comm, sizeof(comm) - 1);
+    close(fd);
+    if (n <= 0) {
+        g_gbvk_is_game = 1;
+        return;
+    }
+    while (n > 0 && (comm[n - 1] == '\n' || comm[n - 1] == '\r')) n--;
+    comm[n] = '\0';
+
+    size_t clen = strlen(comm);
+    size_t wlen = strlen(want);
+    size_t cmp  = clen < wlen ? clen : wlen;    /* comm may be truncated */
+    g_gbvk_is_game = (cmp > 0 && strncasecmp(comm, want, cmp) == 0);
+
+    if (!g_gbvk_is_game)
+        gbvk_dbg("process '%s' is not the game ('%s') , VRAM inflation "
+                 "inactive for this process", comm, want);
+}
+
+static int gbvk_is_game_process(void)
+{
+    pthread_once(&g_gbvk_is_game_once, gbvk_detect_is_game);
+    return g_gbvk_is_game;
 }
 
 /* ── Allocation tracking hash table ──────────────────────────────────── */
@@ -974,6 +1058,7 @@ static void dev_free(VkDevice h)
 static void inflate_heaps(VkPhysicalDeviceMemoryProperties *p)
 {
     if (!g_gbvk_virtual_vram_bytes) return;
+    if (!gbvk_is_game_process()) return;   /* see gbvk_is_game_process() comment */
     for (uint32_t i = 0; i < p->memoryHeapCount; i++) {
         if ((p->memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) &&
             p->memoryHeaps[i].size < g_gbvk_virtual_vram_bytes)
@@ -1042,6 +1127,7 @@ static uint64_t gbvk_reserved_budget(uint64_t capacity)
 static void inflate_budget(VkPhysicalDeviceMemoryProperties2 *p)
 {
     if (!g_gbvk_virtual_vram_bytes) return;
+    if (!gbvk_is_game_process()) return;   /* see gbvk_is_game_process() comment */
 
     VkBaseOutStructure *chain = (VkBaseOutStructure *)p->pNext;
     while (chain) {

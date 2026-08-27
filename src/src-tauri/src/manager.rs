@@ -3004,6 +3004,21 @@ pub fn launch_game_ext(appid: &str, disable_secondary_displays: bool)
         .map(|s| s.steam_silent_launch)
         .unwrap_or(true);
     let steam_was_up = steam_is_running();
+
+    // A signed-out client is up, answers, and drops the request. Sending the
+    // launch anyway costs the user the whole 3-minute budget and ends in an
+    // empty log, which reads as "GreenBoost did nothing" , so refuse here and
+    // name the actual reason instead. Only a definite signed-out state stops
+    // the launch: Unknown proceeds exactly as before.
+    if steam_was_up && steam_login_state() == SteamLogin::Off {
+        return Err(
+            "Steam is running but signed out, so it accepts launches and \
+             drops them. Nothing is wrong with the game, the Proton mapping or \
+             GreenBoost , the launch never gets past Steam.\n\n\
+             Open Steam and sign in, then launch again:  steam steam://open/main"
+                .to_string());
+    }
+
     if silent && !steam_was_up {
         match Command::new("steam").arg("-silent").spawn() {
             Ok(_) => {
@@ -3025,11 +3040,12 @@ pub fn launch_game_ext(appid: &str, disable_secondary_displays: bool)
     // leaves the window alone.  The URL stays as the fallback for setups
     // where the `steam` binary isn't on PATH (Flatpak, mostly).
     let id_s = id.to_string();
-    // `-applaunch` takes a Steam appid and nothing else. Given a shortcut's
-    // appid it returns 0, logs nothing, and launches nothing (measured
-    // 2026-08-22), so for a shortcut it is not a first attempt , it is a
-    // silent success that consumes the launch and leaves the user watching a
-    // progress counter for a game Steam was never asked to start.
+    // `-applaunch` takes a Steam appid and nothing else; a shortcut is not in
+    // that namespace. Left in the list it is not a first attempt but a silent
+    // success , it exits 0 without launching, the loop stops there, and the
+    // user watches a progress counter for a game Steam was never asked to
+    // start. The URL form is the one Steam documents for shortcuts and the
+    // one its own log shows it using.
     let mut attempts: Vec<Vec<&str>> = Vec::new();
     if !is_shortcut {
         attempts.push(vec!["steam", "-applaunch", &id_s]);
@@ -3123,6 +3139,54 @@ pub fn list_proton_installs() -> Vec<(String, String)> {
 }
 
 /// Is the Steam client up? Same /proc walk as `live_stats::find_game_pid_impl`.
+/// Whether the Steam client currently has a user signed in.
+///
+/// A running Steam process is not a Steam that can launch anything. Sign out
+/// and the client stays up, keeps its process, keeps answering , and silently
+/// drops every launch request it is given. Started with `-silent` (which is
+/// what this app does) there is not even a window on screen to make that
+/// obvious.
+///
+/// Confirmed 2026-08-22: `steam://rungameid/…` returned 0 and launched
+/// nothing, over and over, on a client that had written
+/// `[2026-08-21 21:53:02] [Logged On, 4, 7] LogOff()` and then
+/// `not auto reconnecting due to user initiated logoff` , logged off the
+/// night before and still running eighteen hours later. Every Battle.net and
+/// Hearthstone launch that day went into it and vanished, and the Suite
+/// reported "Starting appid …" for each one.
+///
+/// The connection log is the only place the client states this plainly. Each
+/// line is prefixed with the state it was in, so the last such prefix in the
+/// file is the current state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SteamLogin { On, Off, Unknown }
+
+pub fn steam_login_state() -> SteamLogin {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let Some(path) = [
+        format!("{home}/.local/share/Steam/logs/connection_log.txt"),
+        format!("{home}/.steam/steam/logs/connection_log.txt"),
+        format!("{home}/.steam/root/logs/connection_log.txt"),
+        format!("{home}/.var/app/com.valvesoftware.Steam/data/Steam/logs/connection_log.txt"),
+    ].into_iter().map(PathBuf::from).find(|p| p.is_file())
+    else {
+        return SteamLogin::Unknown;         // no log , say nothing rather than guess
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else { return SteamLogin::Unknown };
+    login_state_from_log(&text)
+}
+
+/// Backwards through the log: the last state marker wins. "Logging On" and
+/// "Logging Off" are the in-between states and are deliberately not matched ,
+/// a client half-way through a login is not something to fail a launch over.
+fn login_state_from_log(text: &str) -> SteamLogin {
+    for line in text.lines().rev() {
+        if line.contains("[Logged On,")  { return SteamLogin::On; }
+        if line.contains("[Logged Off,") { return SteamLogin::Off; }
+    }
+    SteamLogin::Unknown
+}
+
 fn steam_is_running() -> bool {
     let Ok(entries) = std::fs::read_dir("/proc") else { return false };
     for entry in entries.flatten() {
@@ -3215,8 +3279,16 @@ fn spawn_gaming_mode_watcher(appid: String) {
         // user sees and the deadline we enforce cannot drift apart.
         let budget = crate::game_lifecycle::LAUNCH_BUDGET_S;
         let steps = budget / 2;
+        // Confirmed live 2026-08-27: steam.exe (Steamworks' own in-prefix
+        // DRM/ownership bootstrap, excluded from find_game_pid_impl since ,
+        // see live_stats.rs) can run the WHOLE budget without ever handing
+        // off, across multiple different titles. That is a distinct, nameable
+        // failure from "nothing ran at all", so it's tracked across the whole
+        // loop rather than sampled once at the end.
+        let mut saw_drm_bootstrap = false;
         for i in 0..steps {
             if crate::live_stats::find_game_pid_impl().is_some() { seen = true; break; }
+            if crate::live_stats::drm_bootstrap_running() { saw_drm_bootstrap = true; }
             crate::game_lifecycle::note_launch_progress(&appid, i * 2, budget);
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
@@ -3224,7 +3296,7 @@ fn spawn_gaming_mode_watcher(appid: String) {
             // Not necessarily broken , a native (non-Proton) game has no
             // wine preloader to find. But it is the only moment we can tell
             // the user anything, and the wrapper log distinguishes the two.
-            crate::game_lifecycle::note_launch_failed(&appid);
+            crate::game_lifecycle::note_launch_failed(&appid, saw_drm_bootstrap);
             return;
         }
         crate::game_lifecycle::note_launch_started(&appid);
@@ -4031,5 +4103,50 @@ mod compat_tool_mapping_tests {
             "no-op call must not create a backup file");
 
         std::fs::remove_dir_all(dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod steam_login_tests {
+    use super::*;
+
+    /// Verbatim from ~/.local/share/Steam/logs/connection_log.txt on the
+    /// machine where Battle.net and Hearthstone would not launch: a logon the
+    /// evening before, a user-initiated logoff seven minutes later, and then
+    /// nothing for eighteen hours while the process stayed up.
+    const SIGNED_OUT: &str = "\
+[2026-08-21 21:45:45] [Logging On, 4, 7] [U:1:444361811] Using JWT 19854074613322063, persistence: 1\n\
+[2026-08-21 21:45:45] [Logged On, 4, 7] [U:1:444361811] RecvMsgClientLogOnResponse() : processing complete\n\
+[2026-08-21 21:53:02] [Logged On, 4, 7] [U:1:444361811] LogOff()\n\
+[2026-08-21 21:53:02] [Logging Off, 4, 7] [U:1:444361811] AsyncDisconnect( bDontWaitOnTCPShutdown: false )\n\
+[2026-08-21 21:53:03] [Logged Off, 0, 0] [U:1:444361811] ConnectionDisconnected() not auto reconnecting due to user initiated logoff\n\
+[2026-08-21 21:53:04] [Logged Off, 0, 0] [U:1:444361811] Log session ended\n";
+
+    #[test]
+    fn a_logged_off_client_is_reported_as_off() {
+        assert_eq!(login_state_from_log(SIGNED_OUT), SteamLogin::Off);
+    }
+
+    #[test]
+    fn a_later_logon_wins_over_the_earlier_logoff() {
+        let text = format!("{SIGNED_OUT}\
+[2026-08-22 17:30:01] [Logging On, 4, 7] [U:1:444361811] Using JWT 1\n\
+[2026-08-22 17:30:02] [Logged On, 4, 7] [U:1:444361811] RecvMsgClientLogOnResponse() : 'OK'\n");
+        assert_eq!(login_state_from_log(&text), SteamLogin::On);
+    }
+
+    /// A client mid-login is not a client that has failed. Blocking a launch
+    /// on "Logging Off" alone would refuse a perfectly good relaunch.
+    #[test]
+    fn in_between_states_alone_say_nothing() {
+        let text = "[2026-08-22 17:30:01] [Logging On, 4, 7] [U:1:1] Using JWT 1\n";
+        assert_eq!(login_state_from_log(text), SteamLogin::Unknown);
+    }
+
+    #[test]
+    fn an_empty_or_unrelated_log_says_nothing() {
+        assert_eq!(login_state_from_log(""), SteamLogin::Unknown);
+        assert_eq!(login_state_from_log("IPv6 UDP connectivity test - TIMEOUT\n"),
+                   SteamLogin::Unknown);
     }
 }

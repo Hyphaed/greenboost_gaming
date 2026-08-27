@@ -193,14 +193,16 @@ pub fn win_path_to_linux(prefix_root: &Path, win: &str) -> Option<PathBuf> {
 //     thing `steam://rungameid/` accepts for a shortcut.
 //
 // Handing Steam the 32-bit one is not an error, which is the whole problem:
-// `steam -applaunch 3274469611` exits 0, writes nothing to Steam's own log,
-// and launches nothing. Confirmed 2026-08-22 , that is exactly what the
-// Suite had been sending, so every non-Steam game (Battle.net and every
-// title under it) reported "Starting appid …" and then sat there until the
-// launch budget ran out. Ground truth for the conversion is Steam's own
-// console log from a working Battle.net launch on 2026-08-18: appid
-// 3274469611 in the compatdata path, `gameID 14063739891024396288` in the
-// process lines.
+// it is accepted and dropped, so the Suite reported "Starting appid …" for
+// every non-Steam game (Battle.net and every title under it) and then sat
+// there until the launch budget ran out.
+//
+// Ground truth for the conversion is Steam's own console log from a working
+// Battle.net launch on 2026-08-18: appid 3274469611 in the compatdata path,
+// `Adding process … for gameID 14063739891024396288` in the process lines.
+// Not from testing the broken form , the client that was available to test
+// against on 2026-08-22 turned out to be signed out, and a signed-out client
+// drops correct and incorrect ids alike (see `steam_login_state`).
 pub const SHORTCUT_GAMEID_TAG: u64 = 0x0200_0000;
 
 /// The id `steam://rungameid/` needs for a non-Steam shortcut.

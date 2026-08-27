@@ -1,17 +1,50 @@
 """GreenBoost Proton , thin wrapper around upstream Steam Proton builds.
 
-MINIMUM PYTHON: 3.9.  Steam does not run this file with the host interpreter.
-It runs the compat tool inside the Steam Linux Runtime ("sniper") container
-, see toolmanifest.vdf's `require_tool_appid 1628350` , whose /usr/bin/python3
-is 3.9.2.  Syntax that only the host understands parses fine in development
-and dies at launch, with no way for the wrapper's own error handling to help,
-because a SyntaxError fires before any of it exists.  That is not theoretical:
-it happened on 2026-08-20, when a PEP 701 f-string (a newline plus nested
-same-type quotes inside `{...}`) took every launch down with
+CONTAINER: Steam Linux Runtime 4.0 (`require_tool_appid 4183110` in
+toolmanifest.vdf), whose bundled /usr/bin/python3 is 3.13. This was Steam
+Linux Runtime 3.0 ("sniper", appid 1628350, python3.9.2) until 2026-08-27,
+when upstream "Proton 11.0" , the build this wrapper delegates to , was found
+to itself require appid 4183110, not 1628350. A compat tool's declared
+runtime and its delegate Proton's own required runtime must match: Steam
+launches the runtime named in THIS tool's manifest regardless of what Proton
+itself needs, so a stale appid here silently ran every launch inside the
+wrong container. Confirmed live: sniper's own pressure-vessel-wrap threw an
+intermittent internal assertion (`_srt_architecture_read_elf`) on this
+machine; every launch through it hung indefinitely at Steamworks' in-prefix
+DRM/ownership bootstrap (steam.exe), while the identical launch through
+Runtime 4.0 (plain Proton 11, no wrapper) completed in under 3 seconds. Full
+environment diff between a hung and a working process confirmed
+PRESSURE_VESSEL_RUNTIME(_BASE) as the only structurally different thing
+between them.
+
+FOLLOW-UP, 2026-08-27, same day: the runtime-appid fix above was real but
+was not the only cause of a steam.exe DRM-stage hang with this exact
+symptom. Final Fantasy VII Rebirth hung the identical way (steam.exe stuck
+in futex_wait_multiple, no ff7rebirth.exe process ever spawned) on the now-
+correct Runtime 4.0 / appid 4183110 deployment. A/B'd on the real path:
+switching channel=stable vs channel=experimental made no difference (both
+hung); every Proton/Wine sync knob this file sets was ruled out one at a
+time. The actual cause was the Vulkan layer's VRAM inflation reaching
+Steamworks' own in-prefix hardware-survey process , see the
+GREENBOOST_GAME_EXE comment below and gbvk_is_game_process() in
+greenboost_vulkan_layer.c for the full account and the fix. Two distinct
+bugs produced the same-looking hang; don't assume this container/appid
+paragraph explains every steam.exe stall.
+
+MINIMUM PYTHON: 3.9, kept as a conservative floor even though the real
+container now runs 3.13 , older-syntax code parses fine on a newer
+interpreter, and pinning to 3.9 keeps this file safe if a user's setup ever
+falls back to sniper, or if a future Proton build reverts the requirement.
+Syntax the wrapper's own coding floor forbids still parses fine in
+development (on whatever host Python the developer runs) and dies at launch
+inside the real container, with no way for the wrapper's own error handling
+to help, because a SyntaxError fires before any of it exists. That is not
+theoretical: it happened on 2026-08-20, when a PEP 701 f-string (a newline
+plus nested same-type quotes inside `{...}`) took every launch down with
 "SyntaxError: EOL while scanning string literal" while `py_compile` passed on
-the 3.14 host.  So: no PEP 701 f-strings, no `match`, no `except*`, no
+the 3.14 host. So: no PEP 701 f-strings, no `match`, no `except*`, no
 `tomllib`, no `datetime.UTC`, no `zip(strict=)`, no `slots=True`, no `Self`.
-`greenboost_proton/install.sh` enforces this with a real 3.9 interpreter
+`greenboost_proton/install.sh` enforces this with a real old interpreter
 before it will deploy , see `tests/test_proton_min_python.py`.
 
 This module is loaded and executed by the `proton` stub next to it, which
@@ -101,6 +134,8 @@ def _rotate_proton_logs():
 # Schema: ~/.config/greenboost-gaming/per-game/<AppID>.json
 # {
 #   "env": {"KEY": "val"},
+#   "external_dlls_enabled": true,
+#   "external_dll_dir": "/home/you/my-dlls",
 #   "wrappers": {"gamemode": true, "mangohud": true,
 #                "gamescope": ["-W","1920","-H","1080","-r","120","-f"]},
 #   "nis": {"enabled": true, "sharpness": 0.6, "scale": 0.77},
@@ -110,6 +145,29 @@ def _rotate_proton_logs():
 #   "hooks": {"pre": ["/path/script.sh"], "post": []}
 # }
 # Merge order: process env > per-game JSON env > per-game .env > global_settings
+#
+# "env" already accepts ANY key, including WINEDLLOVERRIDES , this is the
+# generic mechanism for choosing native-vs-builtin per DLL name (e.g.
+# "env": {"WINEDLLOVERRIDES": "mycustom=n,b"}), nothing further to build
+# there. "external_dll_dir" is the companion piece: a directory the user has
+# already populated with their own DLLs (a debug build, a mod, a locally
+# installed plugin , this file never knows or cares which). No environment
+# variable can inject a Unix directory into the Windows DLL search order
+# (WINEPATH is not read by Wine; it was tried and confirmed dead against a
+# real Proton Experimental build , WINEPATH appears in zero Wine binaries,
+# unlike WINEDLLPATH, which is Wine's own search path for its *builtin* .so
+# modules, not native PE DLLs). Since a game's own executable directory is
+# the first place Windows looks for a DLL by name, the only mechanism that
+# actually works is placing files there: _external_dll_plan() /
+# _apply_external_dll_overlay() symlink each *.dll from the configured
+# directory into the game's exe directory, backing up any DLL the game
+# already ships under that name to "<name>.gb_bak" first;
+# _revert_external_dll_overlay() undoes it on exit. This never creates,
+# fetches, downloads, or copies the DLLs themselves , only the user's own
+# files are ever linked in, and a missing/empty directory is logged and
+# skipped, not obtained. The folder is for locally supplied software the
+# user has the rights to use; GreenBoost makes no assumption about its
+# provenance or licensing.
 
 def _load_per_game_json(gameid):
     """Return (profile_dict | None).  Never raises."""
@@ -181,6 +239,130 @@ def _activate_gpu_profile(name):
                         f"(pkexec: {_r.returncode})\n")
     except Exception as _e:
         sys.stderr.write(f"[greenboost-proton] GPU profile power limit failed: {_e}\n")
+
+
+def _external_dll_plan(profile, game_dir):
+    """Return [(src, dst), ...] for the user-supplied DLL overlay. No FS writes.
+
+    Vendor-agnostic mechanism: the per-game profile names ONE directory the
+    user has already populated themselves (a debug build, a ReShade/mod DLL
+    set, Streamline/DLSS files they downloaded by hand , this file never
+    knows or cares which). This function only figures out which files would
+    be linked in and where; it never creates, fetches, downloads, or copies
+    the DLLs themselves, and it never inspects what is inside them beyond
+    the ".dll" filename filter needed to find them. A missing or empty
+    directory is reported and skipped, not obtained , the game still
+    launches normally either way.
+
+    No environment variable can inject a Unix directory into the Windows
+    DLL search order (Wine does not read WINEPATH; WINEDLLPATH only covers
+    Wine's own builtin .so modules). The executable's own directory is the
+    first place Windows looks for a DLL by name, so that directory is the
+    only placement that actually takes effect for a game that ships its own
+    copy of the same DLL name.
+    """
+    if not profile.get("external_dlls_enabled"):
+        return []
+    raw_dir = profile.get("external_dll_dir") or ""
+    if not raw_dir:
+        return []
+    src_dir = os.path.normpath(os.path.expanduser(str(raw_dir)))
+    if not os.path.isdir(src_dir):
+        sys.stderr.write(
+            f"[greenboost-proton] external_dll_dir: directory not found, "
+            f"skipping (not created or fetched): {raw_dir!r}\n")
+        return []
+    if not game_dir or not os.path.isdir(game_dir):
+        sys.stderr.write(
+            "[greenboost-proton] external_dll_dir: game directory unknown, "
+            "skipping DLL overlay\n")
+        return []
+    if os.path.realpath(src_dir) == os.path.realpath(game_dir):
+        sys.stderr.write(
+            "[greenboost-proton] external_dll_dir: same as the game's own "
+            "directory, skipping DLL overlay\n")
+        return []
+    if not os.access(game_dir, os.W_OK):
+        sys.stderr.write(
+            f"[greenboost-proton] external_dll_dir: {game_dir!r} is not "
+            "writable, skipping DLL overlay\n")
+        return []
+    try:
+        names = os.listdir(src_dir)
+    except OSError as e:
+        sys.stderr.write(f"[greenboost-proton] external_dll_dir: {e}\n")
+        return []
+    plan = []
+    for name in sorted(names):
+        if not name.lower().endswith(".dll"):
+            continue
+        src = os.path.join(src_dir, name)
+        if not os.path.isfile(src):
+            continue
+        plan.append((src, os.path.join(game_dir, name)))
+    if not plan:
+        sys.stderr.write(
+            f"[greenboost-proton] external_dll_dir: no .dll files found in "
+            f"{src_dir!r}\n")
+    return plan
+
+
+def _apply_external_dll_overlay(plan):
+    """Symlink each (src, dst) from _external_dll_plan() into place.
+
+    A file the game already ships at dst is backed up to "dst.gb_bak" first
+    (never overwritten if a backup from a previous, uncleanly-ended session
+    is already there , that file holds the true original). Every step is
+    independent and failure-isolated: one bad file is skipped with a stderr
+    warning, never a reason to abort the launch. Returns the list of dst
+    paths this call actually symlinked, for _revert_external_dll_overlay().
+    """
+    applied = []
+    for src, dst in plan:
+        backup = dst + ".gb_bak"
+        try:
+            if os.path.lexists(dst) and not os.path.lexists(backup):
+                os.rename(dst, backup)
+            elif os.path.lexists(dst):
+                os.remove(dst)
+            os.symlink(src, dst)
+            applied.append(dst)
+        except OSError as e:
+            sys.stderr.write(
+                f"[greenboost-proton] external_dll_dir: could not link "
+                f"{dst!r}, skipping this file ({e})\n")
+    if applied:
+        sys.stderr.write(
+            f"[greenboost-proton] external_dll_dir: {len(applied)} of "
+            f"{len(plan)} DLL(s) overlaid from user-supplied directory\n")
+    return applied
+
+
+def _revert_external_dll_overlay(applied):
+    """Undo _apply_external_dll_overlay(): remove our symlinks, restore backups.
+
+    Only ever removes a path that is still exactly the symlink this session
+    created , a real file that replaced it mid-session (a game update, a
+    Steam integrity check) is left alone rather than deleted.
+    """
+    if not applied:
+        return
+    restored = 0
+    for dst in applied:
+        backup = dst + ".gb_bak"
+        try:
+            if os.path.islink(dst):
+                os.remove(dst)
+            if os.path.lexists(backup):
+                os.rename(backup, dst)
+                restored += 1
+        except OSError as e:
+            sys.stderr.write(
+                f"[greenboost-proton] external_dll_dir: could not restore "
+                f"{dst!r} ({e})\n")
+    sys.stderr.write(
+        f"[greenboost-proton] external_dll_dir: overlay removed, "
+        f"{restored} original file(s) restored\n")
 
 
 def _apply_per_game_json_env(profile):
@@ -407,7 +589,8 @@ def _install_stop_handler() -> None:
                 sys.stderr.write(
                     "[greenboost-proton] stopping game , "
                     f"{len(rep['terminated'])} process(es) asked to exit, "
-                    f"{len(rep['killed'])} force-killed\n")
+                    f"{len(rep['killed'])} force-killed "
+                    f"(reason={os.environ.get('GB_STOP_REASON', 'signal')})\n")
             except Exception as _e:             # noqa: BLE001
                 sys.stderr.write(f"[greenboost-proton] stop failed: {_e}\n")
         raise KeyboardInterrupt(f"signal {signum}")
@@ -2453,8 +2636,54 @@ def _run_greenboost_launch(proton_upstream, _upstream_label, _upstream_install_h
         except Exception:
             pass
 
+    # ── User-supplied DLL overlay (B3 companion) ──────────────────────────────
+    # Reuses _sl_game_dir resolved just above , same argv shape, no need to
+    # derive the game's exe directory twice.
+    _external_dll_applied = _apply_external_dll_overlay(
+        _external_dll_plan(_per_game_profile or {}, _sl_game_dir))
+
     # ── GreenBoost env vars (set before Proton Experimental's init_session) ───
     os.environ.setdefault("GREENBOOST_VULKAN", "1")
+
+    # GREENBOOST_GAME_EXE , the Vulkan layer's process-identity gate.
+    #
+    # Real incident, 2026-08-27: Final Fantasy VII Rebirth hung indefinitely
+    # inside Proton's in-prefix `steam.exe` (the Steamworks DRM/hardware-
+    # survey client), before the actual game exe ever launched.  A/B'd on the
+    # real path (steam -applaunch, 45 s wait, checked with pgrep against the
+    # real process comm, not a cmdline substring match which false-positives
+    # on steam.exe's own argv containing the game's path):
+    #   - Disabling every Proton/Wine sync-and-scheduling knob the wrapper
+    #     sets (WINEFSYNC_FUTEX2, PROTON_SCHED_RR, PROTON_NO_WRITE_WATCH,
+    #     PROTON_PARALLEL_PROCESS_INIT) plus the OpenGL LD_PRELOAD layer:
+    #     still hung.
+    #   - Switching the delegate Proton build (channel=stable → experimental):
+    #     still hung.
+    #   - GREENBOOST_VULKAN_DISABLE=1 (the layer's real, manifest-documented
+    #     kill switch , GREENBOOST_VULKAN=0 does NOT gate anything; see the
+    #     comment at VK_ADD_IMPLICIT_LAYER_PATH below): game launched clean.
+    # vulkan-layer.log confirmed it , with the layer disabled, the log gained
+    # zero new lines for that launch; with it enabled, every hang logged
+    # exactly one CreateInstance from an app identifying as 'unknown', then
+    # silence forever. VK_ADD_IMPLICIT_LAYER_PATH is prefix-wide, so the
+    # layer had been activating inside EVERY Wine process , steam.exe,
+    # explorer.exe, svchost.exe, not just the game , and its
+    # gbvk_GetPhysicalDeviceMemoryProperties hook unconditionally reports an
+    # inflated VRAM figure (53 GB virtual pool vs. 12 GB physical) to any
+    # caller. That inflation is deliberate and required for the game process
+    # (see greenboost_documentation_extension_official_nvidia.md); it was
+    # never meant to reach Steamworks' own internal GPU survey, which has no
+    # reason to expect a card claiming 4x its physical VRAM and , on this
+    # evidence , doesn't handle it gracefully.
+    #
+    # The fix (greenboost_vulkan_layer.c) is a process-identity gate: only
+    # the process whose /proc/self/comm matches this exe's basename gets the
+    # inflated heap sizes; every other process in the prefix sees the real,
+    # unmodified GPU properties. This var is how the wrapper tells the layer
+    # which process that is , it already knows, from the same argv it is
+    # about to hand to Proton.
+    if len(sys.argv) >= 3 and sys.argv[1] in ("run", "runinprefix", "waitforexitandrun"):
+        os.environ["GREENBOOST_GAME_EXE"] = os.path.basename(sys.argv[2])
 
     # OpenGL layer , LD_PRELOAD interposer for OpenGL / wined3d games.
     # Activated by GREENBOOST_OPENGL=1; libgb_gl.so is built alongside the Vulkan
@@ -3128,8 +3357,15 @@ def _run_greenboost_launch(proton_upstream, _upstream_label, _upstream_install_h
         # lock, the compositor and gaming_mode, and still writes the session
         # summary. 143 = 128 + SIGTERM, the conventional "stopped by signal".
         rc = 143
-        sys.stderr.write("[greenboost-proton] session stopped on request\n")
+        sys.stderr.write(
+            "[greenboost-proton] session stopped on request "
+            f"(reason={os.environ.get('GB_STOP_REASON', 'signal')})\n")
     finally:
+        # Undo the user-supplied DLL overlay before anything else in this
+        # block , same rationale as _release_game_tree() below: reached on
+        # a normal exit, on KeyboardInterrupt (the stop-handler path), and
+        # after a signal, so the game's own files are never left swapped.
+        _revert_external_dll_overlay(_external_dll_applied)
         # Matching "greenboost-gaming.service" stop call removed , see the
         # comment at the start-side call above.
         # ── B8: session summary , single source of truth, single sink.

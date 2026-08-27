@@ -1652,6 +1652,12 @@ export function GamesView() {
   const [dlssMenuOpen, setDlssMenuOpen] = useState(false);
 
   const [launching, setLaunching] = useState(false);
+  // Set when a launch's own failure was specifically Steam's in-prefix DRM
+  // bootstrap (steam.exe) hanging , see LaunchStatus::Failed's stuck_reason.
+  // Holds the appid so "Fix Stuck Launch" targets the right one even if the
+  // user has since selected a different game in the list.
+  const [stuckAppid, setStuckAppid] = useState<string | null>(null);
+  const [fixingStuck, setFixingStuck] = useState(false);
 
   /** Watch a launch until a game process appears, or until it's clear none will.
    *
@@ -1674,6 +1680,7 @@ export function GamesView() {
       }
       if (st.state === "started" && st.appid === appid) {
         setMsg("Running.");
+        setStuckAppid(null);
         return;
       }
       if (st.state === "failed" && st.appid === appid) {
@@ -1682,11 +1689,26 @@ export function GamesView() {
           : "\n\nThe Proton wrapper wrote no log at all, which usually means " +
             "Steam never reached it , check the game's compatibility tool is " +
             "set to GreenBoost Proton.";
-        setMsg(
-          "No game process ever started. Steam accepted the launch, but nothing " +
-          "came up in 3 minutes.\n\nNothing is broken and no settings changed " +
-          ", you can launch again, or pick a different Proton under Global " +
-          "Settings \u2192 Upstream Proton." + log);
+        if (st.stuck_reason === "drm_check") {
+          // Distinct from the generic timeout below: something specific and
+          // nameable ran (Steam's own DRM/ownership check) and hung, rather
+          // than nothing running at all. Offer the one-click recovery
+          // instead of just a diagnosis.
+          setMsg(
+            "Stuck on Steam's own DRM/ownership check (steam.exe, inside the " +
+            "prefix) , not GreenBoost, not this compat tool, not the game " +
+            "itself. It never handed off to the game in 3 minutes.\n\nClick " +
+            "\"Fix Stuck Launch\" to clear the wedged process tree, then try " +
+            "launching again." + log);
+          setStuckAppid(appid);
+        } else {
+          setMsg(
+            "No game process ever started. Steam accepted the launch, but nothing " +
+            "came up in 3 minutes.\n\nNothing is broken and no settings changed " +
+            ", you can launch again, or pick a different Proton under Global " +
+            "Settings \u2192 Upstream Proton." + log);
+          setStuckAppid(null);
+        }
         return;
       }
       if (st.state === "pending" && st.appid === appid) {
@@ -1712,6 +1734,7 @@ export function GamesView() {
     const appid = selected.appid;
     setLaunching(true);
     setMsg(null);
+    setStuckAppid(null);
     try {
       // Reads the shared store instead of re-invoking the backend. The old
       // defensive re-fetch existed because this handler sat next to two
@@ -1727,6 +1750,25 @@ export function GamesView() {
       setMsg("Launch failed: " + (e?.message ?? e));
     }
     setLaunching(false);
+  };
+
+  /** Clear a launch wedged on Steam's own DRM/ownership check. Same
+   *  underlying stop as the tray's "Stop game" , there's nothing playing and
+   *  nothing to save, just a stuck pre-launch process tree , offered here
+   *  because the Suite already knows exactly what's stuck and why, instead
+   *  of leaving the user to find the tray icon or quit Steam entirely (the
+   *  full-client restart that was the only recovery before this existed). */
+  const handleFixStuckLaunch = async () => {
+    if (!stuckAppid) return;
+    setFixingStuck(true);
+    try {
+      await invoke("fix_stuck_launch", { appid: stuckAppid });
+      setMsg("Cleared. You can launch again.");
+      setStuckAppid(null);
+    } catch (e: any) {
+      setMsg("Could not clear the stuck launch: " + (e?.message ?? e));
+    }
+    setFixingStuck(false);
   };
 
   const overrideDiffKeys = gameOverrides ? diffFromOptimal(gameOverrides) : [];
@@ -1890,6 +1932,16 @@ export function GamesView() {
                     title="Launch via Steam , uses your per-game Proton selection"
                   >
                     <Icon.Gamepad /> {launching ? "Launching…" : "Launch"}
+                  </button>
+                )}
+                {stuckAppid === selected.appid && (
+                  <button
+                    className="btn-revert"
+                    onClick={handleFixStuckLaunch}
+                    disabled={fixingStuck}
+                    title="Clear a launch wedged on Steam's own DRM/ownership check"
+                  >
+                    <Icon.AlertCircle /> {fixingStuck ? "Fixing…" : "Fix Stuck Launch"}
                   </button>
                 )}
                 {!loadingSettings && (
@@ -2473,6 +2525,48 @@ export function GamesView() {
                         } : prev);
                       }}
                     />
+                  </div>
+                </CollapsibleSection>
+
+                <CollapsibleSection title="External DLLs"
+                  defaultOpen={gameOverrides.external_dlls_enabled}>
+                  <div className="gs-row" style={{ padding: "10px 16px", cursor: "pointer" }}
+                       onClick={() => saveOverrides({ external_dlls_enabled: !gameOverrides.external_dlls_enabled })}>
+                    <div className="gs-row-label">
+                      <div className="gs-row-title">Use external DLL folder{GS_INFO["External DLL folder"] && <InfoTip>{GS_INFO["External DLL folder"]}</InfoTip>}</div>
+                      <div className="gs-row-sub">
+                        GreenBoost never downloads or supplies these files , point this at
+                        DLLs you already obtained and placed yourself.
+                      </div>
+                    </div>
+                    <div className="gs-row-control">
+                      <div className={`toggle${gameOverrides.external_dlls_enabled ? " on" : ""}`}>
+                        <div className="toggle-track" /><div className="toggle-thumb" />
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ padding: "8px 16px" }}>
+                    <div className="gs-row-title" style={{ marginBottom: 4 }}>
+                      Folder path
+                    </div>
+                    <input
+                      type="text"
+                      className="settings-current-input"
+                      style={{ width: "100%", maxWidth: 400 }}
+                      placeholder="/home/you/my-dlls"
+                      value={gameOverrides.external_dll_dir}
+                      disabled={savingOverrides}
+                      onBlur={e => saveOverrides({ external_dll_dir: e.target.value.trim() })}
+                      onChange={e => {
+                        const dir = e.target.value;
+                        setGameOverrides(prev => prev ? { ...prev, external_dll_dir: dir } : prev);
+                      }}
+                    />
+                    {gameOverrides.external_dlls_enabled && !gameOverrides.external_dll_dir && (
+                      <p style={{ fontSize: 11, color: "#8a9ab0", margin: "6px 0 0" }}>
+                        Enabled, but no folder is set , the game will launch normally with no overlay.
+                      </p>
+                    )}
                   </div>
                 </CollapsibleSection>
 
