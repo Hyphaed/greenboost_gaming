@@ -136,6 +136,8 @@ def _rotate_proton_logs():
 #   "env": {"KEY": "val"},
 #   "external_dlls_enabled": true,
 #   "external_dll_dir": "/home/you/my-dlls",
+#   "external_dll_targets": {"sl.dlss.dll": ["/path/to/game/Engine/.../Win64"]},
+#   "external_dll_disabled": ["nvngx_dlssnr.dll", "sl.dlss_nr.dll"],
 #   "wrappers": {"gamemode": true, "mangohud": true,
 #                "gamescope": ["-W","1920","-H","1080","-r","120","-f"]},
 #   "nis": {"enabled": true, "sharpness": 0.6, "scale": 0.77},
@@ -160,7 +162,10 @@ def _rotate_proton_logs():
 # the first place Windows looks for a DLL by name, the only mechanism that
 # actually works is placing files there: _external_dll_plan() /
 # _apply_external_dll_overlay() symlink each *.dll from the configured
-# directory into the game's exe directory, backing up any DLL the game
+# directory into the game's exe directory (or, per "external_dll_targets",
+# into whichever directory already ships that DLL name , some engines,
+# Unreal in particular, load their DLSS/Streamline plugins from a
+# subdirectory, not next to the launcher exe), backing up any DLL the game
 # already ships under that name to "<name>.gb_bak" first;
 # _revert_external_dll_overlay() undoes it on exit. This never creates,
 # fetches, downloads, or copies the DLLs themselves , only the user's own
@@ -241,7 +246,40 @@ def _activate_gpu_profile(name):
         sys.stderr.write(f"[greenboost-proton] GPU profile power limit failed: {_e}\n")
 
 
-def _external_dll_plan(profile, game_dir):
+def _renderdoc_capture_env(gameid, marker_dir=None):
+    """Return the env vars to set for this launch if RenderDoc capture was
+    armed for `gameid`, else {}. Pure aside from consuming (deleting) the
+    marker file , same shape as _external_dll_plan(): decide, don't apply.
+
+    The marker is an empty file at
+    ~/.config/greenboost-gaming/renderdoc-capture-pending/<appid>, written
+    by src-tauri/src/renderdoc.rs::arm_capture_impl() when the Suite's
+    "Capture" button is clicked. Consuming it here (delete-on-read) means a
+    later plain Launch of the same game never inherits capture mode from a
+    marker the user forgot about.
+
+    `ENABLE_VULKAN_RENDERDOC_CAPTURE` is RenderDoc's OWN opt-in gate on its
+    Vulkan implicit layer (see the layer manifest's "enable_environment"
+    key) , the layer is registered globally by
+    greenboost_proton/install.sh (`renderdoccmd vulkanlayer --register
+    --user`) but does nothing unless this is set, so every ordinary launch
+    is unaffected whether or not RenderDoc is installed.
+    """
+    if not gameid:
+        return {}
+    base = marker_dir or os.path.expanduser(
+        "~/.config/greenboost-gaming/renderdoc-capture-pending")
+    marker = os.path.join(base, gameid)
+    if not os.path.isfile(marker):
+        return {}
+    try:
+        os.remove(marker)
+    except OSError:
+        pass
+    return {"ENABLE_VULKAN_RENDERDOC_CAPTURE": "1"}
+
+
+def _external_dll_plan(profile, game_dir, game_root=None):
     """Return [(src, dst), ...] for the user-supplied DLL overlay. No FS writes.
 
     Vendor-agnostic mechanism: the per-game profile names ONE directory the
@@ -259,7 +297,52 @@ def _external_dll_plan(profile, game_dir):
     Wine's own builtin .so modules). The executable's own directory is the
     first place Windows looks for a DLL by name, so that directory is the
     only placement that actually takes effect for a game that ships its own
-    copy of the same DLL name.
+    copy of the same DLL name , which is also the reason a single `game_dir`
+    is not enough for every game: an Unreal Engine title's exe directory is
+    frequently just a thin launcher, and the DLLs it actually loads live in
+    a plugin subdirectory two or three levels down (confirmed 2026-08-28
+    against a real install of FINAL FANTASY VII REBIRTH , its DLSS/
+    Streamline files live under Engine/Plugins/*/Binaries/ThirdParty/Win64,
+    not next to ff7rebirth.exe).
+
+    `profile["external_dll_targets"]`, written by the Suite from what its
+    own game scanner already found (`Game.dlls[].path`), maps a lowercased
+    DLL filename to the list of directories that already contain a DLL of
+    that name , e.g. {"sl.dlss.dll": [".../StreamlineSubset/.../Win64"]}.
+    A name with an entry there is linked into every listed directory instead
+    of `game_dir`; a name with no entry falls back to `game_dir` exactly as
+    before, so a flat game (like 007 First Light) is unaffected.
+
+    Every target directory (`game_dir` and every directory named in the
+    map) is validated against `game_root` , the map comes from a JSON file
+    on disk, so a directory outside the game's own install tree is rejected
+    rather than written into. `game_root` defaults to `game_dir` itself,
+    which reduces to the old single-directory behaviour when no target map
+    or root is supplied.
+
+    `profile["external_dll_disabled"]`: a list of lowercased filenames to
+    skip even though they're present in `src_dir , the per-DLL enable/
+    disable control in the UI. Lets a user keep an experimental file (DLSS
+    Neural Rendering, Deep DVC, DirectSR , see dllInfo.ts's DLL_EXPLAIN)
+    in their shared folder without it being linked into every game.
+
+    A name with no `external_dll_targets` entry at all , the game has
+    never shipped that filename anywhere , falls back to `game_dir`
+    UNLESS the name looks like a Streamline component (`sl.*.dll` or
+    `nvngx_*.dll`) and `sl.interposer.dll`'s own directory is known, in
+    which case it goes there instead. `game_dir` is `dirname(argv[2])`,
+    which for an Unreal title with a launcher-stub-plus-nested-exe layout
+    (confirmed 2026-08-28 against "FINAL FANTASY VII REBIRTH": Steam's
+    argv[2] is the top-level `ff7rebirth.exe` stub, the real process is
+    `End/Binaries/Win64/ff7rebirth_.exe`, three directories down) is the
+    Steam install ROOT, not anywhere Windows' DLL search order would ever
+    look , placing a brand-new Streamline plugin DLL there is silently
+    inert. sl.interposer.dll's directory is the one place we can be
+    confident about: it's where Streamline's own plugin loader looks for
+    feature DLLs at runtime, and the scanner already found it directly
+    (the game ships sl.interposer.dll itself). If neither the map nor an
+    interposer directory has an answer, `game_dir` remains the last resort
+    , unchanged behaviour for a flat, non-Unreal game.
     """
     if not profile.get("external_dlls_enabled"):
         return []
@@ -282,24 +365,62 @@ def _external_dll_plan(profile, game_dir):
             "[greenboost-proton] external_dll_dir: same as the game's own "
             "directory, skipping DLL overlay\n")
         return []
-    if not os.access(game_dir, os.W_OK):
-        sys.stderr.write(
-            f"[greenboost-proton] external_dll_dir: {game_dir!r} is not "
-            "writable, skipping DLL overlay\n")
-        return []
     try:
         names = os.listdir(src_dir)
     except OSError as e:
         sys.stderr.write(f"[greenboost-proton] external_dll_dir: {e}\n")
         return []
+
+    root = os.path.realpath(game_root) if game_root else os.path.realpath(game_dir)
+    targets = profile.get("external_dll_targets") or {}
+    disabled = {n.lower() for n in (profile.get("external_dll_disabled") or [])}
+    interposer_dirs = targets.get("sl.interposer.dll")
+
+    def _is_streamline_family(name):
+        n = name.lower()
+        return n.startswith("sl.") or n.startswith("nvngx_")
+
+    def _valid_target_dir(d):
+        """A destination directory must exist, be writable, and sit inside
+        the game's own install tree , same guard the single-directory path
+        always had, extended to every directory the target map names."""
+        if not d or not os.path.isdir(d):
+            return False
+        if not os.access(d, os.W_OK):
+            sys.stderr.write(
+                f"[greenboost-proton] external_dll_dir: {d!r} is not "
+                "writable, skipping\n")
+            return False
+        real = os.path.realpath(d)
+        if real != root and not real.startswith(root + os.sep):
+            sys.stderr.write(
+                f"[greenboost-proton] external_dll_dir: {d!r} is outside "
+                f"the game directory ({root!r}), refused\n")
+            return False
+        return True
+
     plan = []
     for name in sorted(names):
-        if not name.lower().endswith(".dll"):
+        lname = name.lower()
+        if not lname.endswith(".dll"):
+            continue
+        if lname in disabled:
             continue
         src = os.path.join(src_dir, name)
         if not os.path.isfile(src):
             continue
-        plan.append((src, os.path.join(game_dir, name)))
+
+        dst_dirs = targets.get(lname)
+        if not dst_dirs:
+            if interposer_dirs and _is_streamline_family(name):
+                dst_dirs = list(interposer_dirs)
+            else:
+                dst_dirs = [game_dir]
+
+        for dst_dir in dst_dirs:
+            if not _valid_target_dir(dst_dir):
+                continue
+            plan.append((src, os.path.join(dst_dir, name)))
     if not plan:
         sys.stderr.write(
             f"[greenboost-proton] external_dll_dir: no .dll files found in "
@@ -369,10 +490,29 @@ def _apply_per_game_json_env(profile):
     """Apply env dict from per-game JSON profile (setdefault , explicit exports win)."""
     if not profile:
         return
+
+    def _append_winedlloverrides(value):
+        # WINEDLLOVERRIDES entries are ";"-separated. This must always
+        # append, never setdefault-skip: a value Steam/Proton already
+        # exported (e.g. an empty ""  from the launch options box) would
+        # otherwise silently discard whatever this profile asks for , the
+        # ONLY other appending write site in this file is _GAME_OVERRIDES
+        # below, and that table is keyed by AppID, not by profile.
+        # NOTE: the per-game .env file's "+=" operator (_apply_per_game_env)
+        # joins with "," , do NOT route WINEDLLOVERRIDES through that path,
+        # a comma there is not the ";" this variable's syntax requires.
+        existing = os.environ.get("WINEDLLOVERRIDES", "")
+        os.environ["WINEDLLOVERRIDES"] = f"{existing};{value}" if existing else value
+
     env_block = profile.get("env") or {}
     applied = 0
     for key, val in env_block.items():
-        if key and key not in os.environ:
+        if not key:
+            continue
+        if key == "WINEDLLOVERRIDES":
+            _append_winedlloverrides(str(val))
+            applied += 1
+        elif key not in os.environ:
             os.environ[key] = str(val)
             applied += 1
     # NIS shortcuts
@@ -395,6 +535,18 @@ def _apply_per_game_json_env(profile):
             "DXVK_NVAPI_DRS_NGX_DLSS_SR_OVERRIDE_RENDER_PRESET_SELECTION", preset)
     if profile.get("reflex"):
         os.environ.setdefault("GREENBOOST_REFLEX", "1")
+    if profile.get("dlss5_enabled"):
+        # DLSS 5 (Neural Rendering) , GreenBoost's own DLSS5 runtime,
+        # installed by gb_gaming.dlss5.enable_for_game() as its own proxy
+        # DLL. Wine loads a DLL "native, then builtin" only when told to ,
+        # without this, Wine's own (absent) builtin wins and the runtime's
+        # proxy is never reached. Independent of the external-DLL-folder
+        # overlay , the runtime needs neither ReShade nor a Streamline DLL
+        # swap. See docs/dlss5-external-folders.md.
+        dlss5_proxy = str(profile.get("dlss5_proxy_dll") or "")
+        if dlss5_proxy:
+            proxy_stem = dlss5_proxy[:-4] if dlss5_proxy.lower().endswith(".dll") else dlss5_proxy
+            _append_winedlloverrides(f"{proxy_stem}=n,b")
     if profile.get("governor") == "performance":
         os.environ.setdefault("GREENBOOST_PERF_LOCK", "1")
     # Per-game overrides for global runtime settings (null=use global, bool=force).
@@ -1743,6 +1895,27 @@ _NO_DXR_GAMES = {
 # Maps AppID → dict of env var overrides applied before Proton Experimental runs.
 # WINEDLLOVERRIDES entries are appended to any existing value (not replaced).
 _GAME_OVERRIDES = {
+    "3768760": {  # 007 First Light , GreenBoost's Vulkan layer stalls the
+        # launch before the game window ever appears: steam.exe's in-prefix
+        # DRM bootstrap runs, then everything (wine loaddll trace included)
+        # goes silent for minutes with no error, no crash, no exit. Confirmed
+        # live 2026-09-01: GREENBOOST_VULKAN_DISABLE=1 alone (nothing else
+        # changed) let 007FirstLight.exe load and render immediately; every
+        # other lever (external DLL overlay off, GREENBOOST_OPENGL=0,
+        # GREENBOOST_DISABLE=1 full bypass) was tested first and ruled out
+        # or was too blunt (DISABLE=1 also drops gplasync/DXR/affinity).
+        # Not unique to GreenBoost: vkd3d-proton has open upstream reports of
+        # this game hanging/hitting Xid 109 during Enhanced-Barrier-heavy
+        # transitions (ValveSoftware/Proton#9842, HansKristian-Work/
+        # vkd3d-proton#3056 on a different title, same symptom class) ,
+        # GreenBoost's layer adds Vulkan call overhead around instance/device
+        # creation that plausibly tips an already timing-sensitive title over.
+        # This is the layer's own documented kill switch (GREENBOOST_VULKAN=0
+        # does NOT gate anything , see the comment near GREENBOOST_VULKAN_DISABLE
+        # above). Scoped to this one game: the layer still works for every
+        # other title, so it stays enabled everywhere else.
+        "GREENBOOST_VULKAN_DISABLE": "1",
+    },
 }
 
 
@@ -2638,9 +2811,23 @@ def _run_greenboost_launch(proton_upstream, _upstream_label, _upstream_install_h
 
     # ── User-supplied DLL overlay (B3 companion) ──────────────────────────────
     # Reuses _sl_game_dir resolved just above , same argv shape, no need to
-    # derive the game's exe directory twice.
+    # derive the game's exe directory twice. game_root anchors the target-
+    # directory validation in _external_dll_plan(): Steam sets
+    # STEAM_COMPAT_INSTALL_PATH to the game's actual install directory,
+    # which for a game like FF7 Rebirth is several levels above the exe , a
+    # plain os.environ.get with no override here since this is read-only
+    # trust in Steam's own launch env, not user input.
+    _game_root = os.environ.get("STEAM_COMPAT_INSTALL_PATH") or _sl_game_dir
     _external_dll_applied = _apply_external_dll_overlay(
-        _external_dll_plan(_per_game_profile or {}, _sl_game_dir))
+        _external_dll_plan(_per_game_profile or {}, _sl_game_dir, _game_root))
+
+    # ── RenderDoc capture (opt-in, armed by the Suite's "Capture" button) ─────
+    for _k, _v in _renderdoc_capture_env(gameid).items():
+        os.environ[_k] = _v
+        sys.stderr.write(
+            "[greenboost-proton] RenderDoc capture armed for this launch , "
+            "press the capture hotkey (F12 by default) in-game, then find "
+            "the .rdc under ~/RenderDoc/ via the Suite's Capture button.\n")
 
     # ── GreenBoost env vars (set before Proton Experimental's init_session) ───
     os.environ.setdefault("GREENBOOST_VULKAN", "1")
@@ -2734,6 +2921,20 @@ def _run_greenboost_launch(proton_upstream, _upstream_label, _upstream_install_h
     # PR-GGGG: per-game .env override (highest precedence after explicit
     # exports , overrides global_settings defaults and JSON profile).
     _apply_per_game_env(gameid)
+
+    # Alpha stage, 2026-09-02: the Vulkan layer (VRAM inflation / T2-T3
+    # tiering) defaults OFF and is hidden from the Suite's UI until it's
+    # ready for general use. GREENBOOST_VULKAN=1 (set above) is harmless
+    # either way , setting it does NOT reliably enable the layer on its own
+    # (confirmed live, 2026-08-27: this loader's `enable_environment` check
+    # ignores the value and only checks presence), so the real switch is the
+    # manifest's own `disable_environment` key , see the incident notes near
+    # GREENBOOST_VULKAN_DISABLE below. Defaulting THAT on is what actually
+    # keeps the layer inert. Placed after both per-game env sources above
+    # (not before) so an explicit "GREENBOOST_VULKAN_DISABLE": "0" in either
+    # one can still re-enable it , setdefault only fills in what neither
+    # already set.
+    os.environ.setdefault("GREENBOOST_VULKAN_DISABLE", "1")
 
     # Ensure the user-local layer manifest is discoverable inside the
     # pressure-vessel container (home is bindmounted; /etc/vulkan and

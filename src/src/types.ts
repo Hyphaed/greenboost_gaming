@@ -2,7 +2,7 @@
 export interface GameDll  { name: string; path: string; version: string; tech_type: string; }
 export interface GameSetting { key: string; display: string; current: string; recommended: string; needs_change: boolean; }
 export interface SettingGroup { title: string; settings: GameSetting[]; }
-export interface Game { name: string; path: string; appid?: string; image?: string; dlls: GameDll[]; optimizations: GameSetting[]; is_optimized: boolean; has_backup: boolean; }
+export interface Game { name: string; path: string; appid?: string; image?: string; dlls: GameDll[]; optimizations: GameSetting[]; is_optimized: boolean; has_backup: boolean; installed: boolean; leftover_bytes?: number; }
 
 export interface NvidiaMismatchInfo {
   loaded:  string;
@@ -170,7 +170,112 @@ export interface GameOverrides {
    *  anything placed there , the user supplies and is responsible for it. */
   external_dlls_enabled: boolean;
   external_dll_dir:  string;
+  /** Lowercased DLL filename -> absolute directory (or directories) that
+   *  already contain a DLL of that name, computed from the game scanner's
+   *  own findings. Lets the overlay (and copy-into-game) target where a
+   *  DLL is actually loaded from , e.g. an Unreal Engine plugin path ,
+   *  instead of always the exe directory. A name with no entry here still
+   *  falls back to the exe directory. */
+  external_dll_targets: Record<string, string[]>;
+  /** Lowercased filenames excluded from the overlay/copy-in even though
+   *  they're present in external_dll_dir , lets a specific file (an
+   *  experimental Neural Rendering / Deep DVC / DirectSR DLL) be opted out
+   *  without removing it from the shared folder. Empty = everything used. */
+  external_dll_disabled: string[];
+  /** One-switch DLSS 5 (Neural Rendering), rewritten 2026-09-02 around
+   *  GreenBoost's own DLSS Neural Rendering runtime. Independent of
+   *  external_dlls_enabled , the runtime needs neither ReShade nor a
+   *  Streamline DLL swap (ReShade support was dropped entirely). See
+   *  docs/dlss5-external-folders.md. */
+  dlss5_enabled: boolean;
+  /** The DLL name the DLSS5 runtime was installed as for this game (e.g.
+   *  "winmm.dll"). "" = not installed yet. */
+  dlss5_proxy_dll: string;
 }
+
+/** One row of the in-app folder browser (browse_folder command). */
+export interface DirEntryInfo {
+  name: string;
+  path: string;
+  dll_count: number;
+}
+
+export interface BrowseResult {
+  path: string;
+  parent: string | null;
+  home: string;
+  entries: DirEntryInfo[];
+  dll_count: number;
+}
+
+/** One DLL found while inspecting an external folder (inspect_dll_folder). */
+export interface ExternalDll {
+  name: string;
+  version: string;
+  known_type: string;
+  size_bytes: number;
+  /** PE VS_VERSIONINFO FileDescription/ProductName, when present. "" for
+   *  either when the file doesn't carry one. Informational only. */
+  description: string;
+  product: string;
+}
+
+/** One per-file outcome of install_external_folder / restore_external_folder. */
+export interface FileResult {
+  name: string;
+  ok: boolean;
+  msg: string;
+  added: boolean;
+}
+
+/** One row of dlss5_preflight , a real, measured check, not a synthetic
+ *  pass/fail. `level` is "error" (blocks the feature from making sense),
+ *  "warn" (informational, doesn't block), or "info" (always shown, e.g. the
+ *  "turn DLSS on in-game first" reminder). */
+export interface PreflightCheck {
+  check:  string;
+  ok:     boolean;
+  level:  "error" | "warn" | "info";
+  detail: string;
+}
+
+/** Result of dlss5_enable / dlss5_disable. `proxy_dll` is the DLL name
+ *  the DLSS5 runtime was installed as , the caller must save it into
+ *  GameOverrides.dlss5_proxy_dll alongside dlss5_enabled. */
+export interface Dlss5EnableResult {
+  ok: boolean;
+  msg: string;
+  proxy_dll: string;
+  files: string[];
+}
+
+/** One row of dlss5_list_assets: nvngx_dlssnr.dll, and whether it's actually
+ *  sitting in the DLSS 5 asset folder right now , the only file this
+ *  feature needs the user to supply (NVIDIA's model DLL, which GreenBoost
+ *  cannot redistribute). The runtime itself ships with the Suite. */
+export interface Dlss5AssetInfo {
+  name: string;
+  present: boolean;
+  required: boolean;
+}
+
+export interface Dlss5AssetList {
+  asset_dir: string;
+  files: Dlss5AssetInfo[];
+}
+
+/** Plain ok/msg result , dlss5_set_config, dlss5_set_asset_dir. */
+export interface Dlss5SimpleResult {
+  ok: boolean;
+  msg: string;
+}
+
+/** dlss5_get_config / dlss5_set_config: "Section.Key" -> value, addressing
+ *  keys straight onto GreenBoostDLSS5.ini (see gb_gaming.dlss5.CONFIG_KEYS
+ *  for the authoritative list). A key absent from a get_config result means
+ *  "auto" (the runtime's own built-in default) , never coerced to a number,
+ *  since "auto" is a real, distinct value the runtime understands. */
+export type Dlss5Config = Record<string, string>;
 
 export interface GlobalSettingsState {
   /** Mirrors perf_mode in global_settings.rs. Was absent here, which let
@@ -229,6 +334,16 @@ export interface DirectStorageInfo {
   proton_capable: boolean | null;
   proton_build:   string;
   nvme_storage:   boolean | null;
+}
+
+export interface ControllerInfo {
+  name:            string;
+  driver:          string;
+  connection:      string;
+  battery_percent: number | null;
+  js_node:         string;
+  event_node:      string | null;
+  hidraw_readable: boolean | null;
 }
 
 export type ViewType = "status" | "games" | "displays" | "profile" | "about" | "live";

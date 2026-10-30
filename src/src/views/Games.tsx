@@ -8,6 +8,7 @@ import { CollapsibleSection } from "../components/CollapsibleSection";
 import { InstallStreamModal } from "../components/InstallStreamModal";
 import { DllPicker } from "../components/DllPicker";
 import { InfoTip } from "../components/InfoTip";
+import { Dlss5Panel } from "../components/Dlss5Panel";
 import { DLL_ORDER, DLL_TYPE, DLL_EXPLAIN } from "../dllInfo";
 import { GS_INFO, GS_BENEFIT, GS_ADDED_BY_GB } from "../gsHelp";
 import { OPTIMAL_OVERRIDES, diffFromOptimal, optimalPatch, countActiveOverrides } from "../gameOptimal";
@@ -16,6 +17,7 @@ import { ChangeSummaryModal } from "../components/ChangeSummaryModal";
 import { summarizeGlobal, summarizeGame, type Change } from "../changeSummary";
 import { globalSettings, useGlobalSettings, loadGlobalSettings,
          patchGlobalSettings, replaceGlobalSettings } from "../store/globalSettings";
+import { VULKAN_LAYER_VISIBLE } from "../featureFlags";
 
 const menuItemStyle: React.CSSProperties = {
   display: "flex", alignItems: "center", gap: 8,
@@ -311,7 +313,12 @@ function GlobalSettingsPanel() {
   const [presets, setPresets] = useState<DlssPresetChoice[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [gsProfiles, setGsProfiles] = useState<string[]>([]);
-  const [selectedGsProfile, setSelectedGsProfile] = useState<string>("");
+  // "__smart" is not a saved profile , it's the always-present anchor entry
+  // that replaces the old blank ", select ," placeholder. Read-only, same
+  // as Profile.tsx's own "Default" fan-curve entry: Load/Delete stay
+  // disabled while it's selected, there is nothing saved to load or delete.
+  const SMART_DEFAULTS_ID = "__smart";
+  const [selectedGsProfile, setSelectedGsProfile] = useState<string>(SMART_DEFAULTS_ID);
   const [gsProfileInput, setGsProfileInput] = useState<string>("");
   const [gsProfileMsg, setGsProfileMsg] = useState<string | null>(null);
   // Settings search + the "GreenBoost extras only" filter. These replace
@@ -371,7 +378,7 @@ function GlobalSettingsPanel() {
   };
 
   const handleGsProfileLoad = async () => {
-    if (!selectedGsProfile) return;
+    if (!selectedGsProfile || selectedGsProfile === SMART_DEFAULTS_ID) return;
     try {
       const loaded = await invoke<GlobalSettingsState | null>("load_gs_profile", { name: selectedGsProfile });
       if (!loaded) { setGsProfileMsg(`Profile "${selectedGsProfile}" not found.`); return; }
@@ -383,11 +390,11 @@ function GlobalSettingsPanel() {
   };
 
   const handleGsProfileDelete = async () => {
-    if (!selectedGsProfile) return;
+    if (!selectedGsProfile || selectedGsProfile === SMART_DEFAULTS_ID) return;
     try {
       await invoke("delete_gs_profile", { name: selectedGsProfile });
       setGsProfileMsg(`Deleted "${selectedGsProfile}".`);
-      setSelectedGsProfile("");
+      setSelectedGsProfile(SMART_DEFAULTS_ID);
       reloadGsProfiles();
     } catch (e: any) {
       setGsProfileMsg("Delete failed: " + (e?.message ?? e));
@@ -664,16 +671,18 @@ function GlobalSettingsPanel() {
           value={selectedGsProfile}
           onChange={e => setSelectedGsProfile(e.target.value)}
         >
-          <option value="">, select ,</option>
+          <option value={SMART_DEFAULTS_ID}>Smart Defaults</option>
           {gsProfiles.map(n => <option key={n} value={n}>{n}</option>)}
         </select>
         <button className="btn-revert" style={{ padding: "5px 10px", fontSize: 12 }}
-                disabled={!selectedGsProfile} onClick={handleGsProfileLoad}>
+                disabled={!selectedGsProfile || selectedGsProfile === SMART_DEFAULTS_ID}
+                onClick={handleGsProfileLoad}>
           Load
         </button>
         <button className="btn-revert" style={{ padding: "5px 10px", fontSize: 12,
                                                 borderColor: "#e05252", color: "#e05252" }}
-                disabled={!selectedGsProfile} onClick={handleGsProfileDelete}>
+                disabled={!selectedGsProfile || selectedGsProfile === SMART_DEFAULTS_ID}
+                onClick={handleGsProfileDelete}>
           Delete
         </button>
         <div style={{ display: "flex", gap: 6, flex: 1, minWidth: 160 }}>
@@ -706,7 +715,7 @@ function GlobalSettingsPanel() {
                     () => update({ gplasync: !state.gplasync })),
              GS_BENEFIT["Background shader compiling"], undefined, GS_INFO["Background shader compiling"])}
 
-        {row("Remember compiled shaders",
+        {VULKAN_LAYER_VISIBLE && row("Remember compiled shaders",
              "Saves the graphics driver's compiled shader work to disk and "
            + "reuses it next time you play. Returning to a shader-heavy "
            + "game loads faster and stutters less the second time around.",
@@ -732,7 +741,7 @@ function GlobalSettingsPanel() {
                     () => update({ compositor_suspend: !state.compositor_suspend })),
              GS_BENEFIT["Pause desktop effects while playing"], undefined, GS_INFO["Pause desktop effects while playing"])}
 
-        {row("Give the game GPU priority",
+        {VULKAN_LAYER_VISIBLE && row("Give the game GPU priority",
              "Tells the graphics driver the game's rendering work matters "
            + "more than background apps (your desktop effects, browser, "
            + "etc.), so the game gets first access to the GPU.",
@@ -740,7 +749,7 @@ function GlobalSettingsPanel() {
                     () => update({ vk_queue_priority: !state.vk_queue_priority })),
              GS_BENEFIT["Give the game GPU priority"], undefined, GS_INFO["Give the game GPU priority"])}
 
-        {row("Shader compile threads",
+        {VULKAN_LAYER_VISIBLE && row("Shader compile threads",
              "How many CPU threads to use for background shader "
            + "compiling. 0 lets GreenBoost pick automatically based on "
            + "your CPU.",
@@ -806,7 +815,7 @@ function GlobalSettingsPanel() {
              toggle(state.hdr, () => update({ hdr: !state.hdr })),
              GS_BENEFIT["HDR (High Dynamic Range)"], undefined, GS_INFO["HDR (High Dynamic Range)"])}
 
-        {row("NIS sharpening , ready to use",
+        {VULKAN_LAYER_VISIBLE && row("NIS sharpening , ready to use",
              "Prepares NVIDIA Image Scaling so it's ready to go, without "
            + "turning the effect on yet. Turn this on first if you plan to "
            + "actually use NIS sharpening below.",
@@ -814,7 +823,7 @@ function GlobalSettingsPanel() {
                     () => update({ nis_enable: !state.nis_enable })),
              GS_BENEFIT["NIS sharpening , ready to use"], undefined, GS_INFO["NIS sharpening , ready to use"])}
 
-        {row("NIS sharpening , actually apply it",
+        {VULKAN_LAYER_VISIBLE && row("NIS sharpening , actually apply it",
              "Turns the NIS sharpening effect on for real, every frame. "
            + "Uses a small amount of extra graphics memory , turn off if "
            + "you notice stutter.",
@@ -829,7 +838,7 @@ function GlobalSettingsPanel() {
                : "Needs \"NIS sharpening , ready to use\" turned on above first , has no effect until then.",
              GS_INFO["NIS sharpening , actually apply it"])}
 
-        {row("Sharpness",
+        {VULKAN_LAYER_VISIBLE && row("Sharpness",
              `How strong the sharpening effect looks (currently ${state.nis_sharpness.toFixed(2)}, `
            + "default 0.50). Higher looks crisper but can add visible "
            + "edges around objects. Takes effect next time you launch a "
@@ -848,7 +857,7 @@ function GlobalSettingsPanel() {
              </div>,
              GS_BENEFIT["Sharpness"], undefined, GS_INFO["Sharpness"])}
 
-        {row("Upscale ratio",
+        {VULKAN_LAYER_VISIBLE && row("Upscale ratio",
              "How much smaller NIS renders the image before scaling it "
            + "back up to your screen , smaller renders faster but softer. "
            + "\"Off\" (100%) only sharpens, with no upscaling. Roughly: "
@@ -870,7 +879,7 @@ function GlobalSettingsPanel() {
       </FilterSection>
 
       <FilterSection title="LATENCY & FRAME PACING" defaultOpen={false}>
-        {row("NVIDIA Reflex (lower input lag)",
+        {VULKAN_LAYER_VISIBLE && row("NVIDIA Reflex (lower input lag)",
              "Reduces the delay between your mouse/controller input and "
            + "what you see on screen. Needs a fairly recent NVIDIA driver "
            + "(version 545 or newer) , safe to leave on otherwise.",
@@ -911,7 +920,7 @@ function GlobalSettingsPanel() {
                     () => update({ memlock_unlimited: !state.memlock_unlimited })),
              GS_BENEFIT["Remove memory-locking limit"], undefined, GS_INFO["Remove memory-locking limit"])}
 
-        {row("VRAM headroom before overflow (MB)",
+        {VULKAN_LAYER_VISIBLE && row("VRAM headroom before overflow (MB)",
              "How much free graphics-card memory to keep in reserve "
            + "before GreenBoost starts moving things to system memory "
            + "instead. Default 32 MB works for most games.",
@@ -924,7 +933,7 @@ function GlobalSettingsPanel() {
              />,
              GS_BENEFIT["VRAM headroom before overflow (MB)"], undefined, GS_INFO["VRAM headroom before overflow (MB)"])}
 
-        {row("Minimum reserved disk space (MB)",
+        {VULKAN_LAYER_VISIBLE && row("Minimum reserved disk space (MB)",
              "Reserves at least this much space on your SSD as a final "
            + "overflow tier, beyond both your graphics card and system "
            + "memory. 0 means no fixed reservation.",
@@ -1059,7 +1068,7 @@ function GlobalSettingsPanel() {
       </FilterSection>
 
       <FilterSection title="GAMING ALONGSIDE LOCAL AI" defaultOpen={false}>
-        {row("Protect game memory under pressure",
+        {VULKAN_LAYER_VISIBLE && row("Protect game memory under pressure",
              "When graphics-card memory runs low, frees up GreenBoost's own "
            + "overflow memory before touching memory the game is actively "
            + "using , helps protect your framerate when memory gets tight.",
@@ -1074,7 +1083,7 @@ function GlobalSettingsPanel() {
             + "for almost everyone , you'd only change these if you're "
             + "diagnosing a specific problem."}>
 
-        {row("Verbose Vulkan logging",
+        {VULKAN_LAYER_VISIBLE && row("Verbose Vulkan logging",
              "Writes detailed frame-by-frame diagnostic logs. Generates a "
            + "lot of data very fast , only turn on while actively "
            + "troubleshooting a problem, then turn it back off.",
@@ -1195,6 +1204,13 @@ function GlobalSettingsPanel() {
 
 export function GamesView() {
   const [games, setGames]           = useState<Game[]>([]);
+  // Split once here rather than re-filtering `installed` at every render
+  // site , scan_games() (scanner.rs) now marks a Steam-uninstalled-but-
+  // leftover directory `installed: false` instead of silently listing it
+  // as a normal game (real incident 2026-08-31: FF7 Rebirth and FF16 both
+  // kept showing as playable after being uninstalled).
+  const installedGames    = games.filter(g => g.installed);
+  const notInstalledGames = games.filter(g => !g.installed);
   const [filter, setFilter]         = useState("");
   const [selected, setSelected]     = useState<Game | null>(null);
   const [groups, setGroups]         = useState<SettingGroup[]>([]);
@@ -1217,8 +1233,26 @@ export function GamesView() {
     useState<DlssSourceState | null>(null);
   const [gameAnalytics, setGameAnalytics] = useState<GameAnalytics | null>(null);
 
+  // What Steam's own CompatToolMapping currently has for the selected game.
+  // `null` means "Steam default" (nothing mapped, or read failed) , see
+  // manager.rs::read_compat_tool. This used to never be surfaced at all:
+  // the mapping only ever got WRITTEN, silently, on Launch, so a game
+  // correctly running under GreenBoost Proton had no visible confirmation
+  // of that , confirmed live 2026-08-31 against "The First Berserker:
+  // Khazan", which was already mapped and already ran through the wrapper,
+  // with nothing in the UI able to show it.
+  const [compatTool, setCompatTool] = useState<string | null>(null);
+  const [togglingCompatTool, setTogglingCompatTool] = useState(false);
+  const [compatToolMsg, setCompatToolMsg] = useState<string | null>(null);
+  const [lastLaunchEpoch, setLastLaunchEpoch] = useState<number | null>(null);
+
   const [gameSettingProfiles, setGameSettingProfiles] = useState<string[]>([]);
-  const [selectedGspName, setSelectedGspName] = useState<string>("");
+  // "__default" is not a saved profile , it's the always-present anchor
+  // entry that replaces the old blank ", select ," placeholder (same
+  // pattern as GlobalSettingsPanel's own SMART_DEFAULTS_ID). Read-only:
+  // Load/Delete stay disabled while it's selected.
+  const DEFAULT_GSP_ID = "__default";
+  const [selectedGspName, setSelectedGspName] = useState<string>(DEFAULT_GSP_ID);
   const [gspInput, setGspInput] = useState<string>("");
   const [gspMsg, setGspMsg] = useState<string | null>(null);
 
@@ -1295,9 +1329,14 @@ export function GamesView() {
       const list: Game[] = await invoke("get_games");
       const deduped = Array.from(new Map(list.map(g => [g.path, g])).values());
       setGames(deduped);
-      if (deduped.length > 0 && !selectedRef.current) {
-        setSelected(deduped[0]);
-        selectedRef.current = deduped[0];
+      // Prefer an installed game as the default selection , otherwise an
+      // uninstalled leftover sorting alphabetically first (as FF7 Rebirth
+      // did, ahead of "The First Berserker: Khazan") would open by default
+      // with no Launch button and nothing useful in the detail pane.
+      const defaultPick = deduped.find(g => g.installed) ?? deduped[0];
+      if (defaultPick && !selectedRef.current) {
+        setSelected(defaultPick);
+        selectedRef.current = defaultPick;
       }
     } catch (e) { console.error(e); }
     setLoadingGames(false);
@@ -1305,6 +1344,7 @@ export function GamesView() {
 
   const [hiddenGames, setHiddenGames] = useState<{ path: string; name: string }[]>([]);
   const [showHidden, setShowHidden] = useState(false);
+  const [showNotInstalled, setShowNotInstalled] = useState(false);
   const [hideMsg, setHideMsg] = useState<string | null>(null);
 
   const loadHidden = useCallback(() => {
@@ -1318,7 +1358,7 @@ export function GamesView() {
     e.stopPropagation();
     setHideMsg(null);
     try {
-      await invoke("hide_game", { path: game.path, name: game.name });
+      await invoke("hide_game", { path: game.path, name: game.name, appid: game.appid ?? null });
       setGames(prev => prev.filter(g => g.path !== game.path));
       if (selectedRef.current?.path === game.path) setSelected(null);
       loadHidden();
@@ -1341,6 +1381,23 @@ export function GamesView() {
       setHideMsg(`Couldn't restore game: ${err}`);
     }
   }, [loadHidden, loadGames]);
+
+  const [deletingLeftover, setDeletingLeftover] = useState<string | null>(null);
+
+  const handleDeleteLeftover = useCallback(async (game: Game) => {
+    setHideMsg(null);
+    setDeletingLeftover(game.path);
+    try {
+      const freedBytes: number = await invoke("delete_leftover_files", { path: game.path });
+      const freedMb = (freedBytes / (1024 * 1024)).toFixed(0);
+      setGames(prev => prev.filter(g => g.path !== game.path));
+      if (selectedRef.current?.path === game.path) setSelected(null);
+      setHideMsg(`Deleted "${game.name}" leftovers, freed ${freedMb} MB.`);
+    } catch (err) {
+      setHideMsg(`Couldn't delete "${game.name}"'s leftover files: ${err}`);
+    }
+    setDeletingLeftover(null);
+  }, []);
 
   const loadSettings = useCallback(async (game: Game) => {
     setLoadingSettings(true);
@@ -1377,7 +1434,7 @@ export function GamesView() {
   }, [gspInput, gameOverrides, selected, reloadGsp]);
 
   const handleGspLoad = useCallback(async () => {
-    if (!selectedGspName || !selected?.appid) return;
+    if (!selectedGspName || selectedGspName === DEFAULT_GSP_ID || !selected?.appid) return;
     try {
       const loaded = await invoke<GameOverrides | null>("load_game_setting_profile", { name: selectedGspName });
       if (!loaded) { setGspMsg(`Profile "${selectedGspName}" not found.`); return; }
@@ -1388,11 +1445,11 @@ export function GamesView() {
   }, [selectedGspName, selected]);
 
   const handleGspDelete = useCallback(async () => {
-    if (!selectedGspName) return;
+    if (!selectedGspName || selectedGspName === DEFAULT_GSP_ID) return;
     try {
       await invoke("delete_game_setting_profile", { name: selectedGspName });
       setGspMsg(`Deleted "${selectedGspName}".`);
-      setSelectedGspName("");
+      setSelectedGspName(DEFAULT_GSP_ID);
       reloadGsp();
     } catch (e: any) { setGspMsg("Delete failed: " + (e?.message ?? e)); }
   }, [selectedGspName, reloadGsp]);
@@ -1414,11 +1471,36 @@ export function GamesView() {
       invoke<GameAnalytics>("analyze_game_sessions", { appid: selected.appid })
         .then(a => setGameAnalytics(a.session_count > 0 ? a : null))
         .catch(() => setGameAnalytics(null));
+      invoke<string | null>("get_compat_tool", { appid: selected.appid })
+        .then(setCompatTool)
+        .catch(() => setCompatTool(null));
+      invoke<number | null>("get_last_greenboost_launch", { appid: selected.appid })
+        .then(setLastLaunchEpoch)
+        .catch(() => setLastLaunchEpoch(null));
     } else {
       setGameOverrides(null);
       setGameAnalytics(null);
+      setCompatTool(null);
+      setLastLaunchEpoch(null);
     }
+    setCompatToolMsg(null);
   }, [selected, loadSettings]);
+
+  const handleToggleCompatTool = useCallback(async () => {
+    if (!selected?.appid) return;
+    setTogglingCompatTool(true);
+    setCompatToolMsg(null);
+    const enable = compatTool !== "greenboost-proton";
+    try {
+      const out: string = await invoke("set_compat_tool", { appid: selected.appid, enable });
+      setCompatToolMsg(out);
+      const fresh: string | null = await invoke("get_compat_tool", { appid: selected.appid });
+      setCompatTool(fresh);
+    } catch (err) {
+      setCompatToolMsg(`Couldn't change the Proton mapping: ${err}`);
+    }
+    setTogglingCompatTool(false);
+  }, [selected, compatTool]);
 
   const handleScanDlssStatus = useCallback(async (): Promise<DlssStatus | null> => {
     if (!selected) return null;
@@ -1659,6 +1741,59 @@ export function GamesView() {
   const [stuckAppid, setStuckAppid] = useState<string | null>(null);
   const [fixingStuck, setFixingStuck] = useState(false);
 
+  // ── RenderDoc capture ─────────────────────────────────────────────────
+  //
+  // A real, human-driven GPU frame debugger (renderdoc.org), not something
+  // GreenBoost built or scripts on its own , the Suite arms capture and
+  // launches the game exactly like the plain Launch button, then hands off
+  // to qrenderdoc for a person to actually inspect. Hidden entirely when
+  // install.sh's RenderDoc staging step didn't run (offline install,
+  // --no-renderdoc, or the layer failed to register).
+  const [renderdocAvailable, setRenderdocAvailable] = useState(false);
+  const [capturing, setCapturing] = useState(false);
+  const [captureArmedAt, setCaptureArmedAt] = useState<number | null>(null);
+  const [captureMsg, setCaptureMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    invoke<boolean>("renderdoc_available").then(setRenderdocAvailable).catch(() => {});
+  }, []);
+
+  const handleCaptureLaunch = async () => {
+    if (!selected?.appid) return;
+    const appid = selected.appid;
+    setCapturing(true);
+    setCaptureMsg(null);
+    try {
+      const armedAt = await invoke<number>("arm_renderdoc_capture", { appid });
+      setCaptureArmedAt(armedAt);
+      const cinema = !!globalSettings.get()?.auto_disable_secondary_on_launch;
+      await invoke("launch_game", { appid, disableSecondaryDisplays: cinema });
+      setCaptureMsg(
+        "Capture armed , press the in-game capture hotkey (F12 by default), " +
+        "then click “Open Capture” after exiting.");
+      void watchLaunch(appid);
+    } catch (e: any) {
+      setCaptureMsg("Could not arm capture: " + (e?.message ?? e));
+    }
+    setCapturing(false);
+  };
+
+  const handleOpenCapture = async () => {
+    if (captureArmedAt == null) return;
+    setCaptureMsg(null);
+    try {
+      const path = await invoke<string | null>("find_renderdoc_capture", { sinceUnix: captureArmedAt });
+      if (!path) {
+        setCaptureMsg("No .rdc found yet under ~/RenderDoc/ , capture a frame in-game first (F12), then try again.");
+        return;
+      }
+      await invoke("open_renderdoc_capture", { path });
+      setCaptureMsg("Opened in qrenderdoc: " + path);
+    } catch (e: any) {
+      setCaptureMsg("Could not open capture: " + (e?.message ?? e));
+    }
+  };
+
   /** Watch a launch until a game process appears, or until it's clear none will.
    *
    *  `launch_game` returning Ok only means Steam accepted the request. The
@@ -1804,7 +1939,7 @@ export function GamesView() {
           <span className="games-list-count">
             {loadingGames
               ? "Scanning…"
-              : `${games.filter(g => !filter.trim() || g.name.toLowerCase().includes(filter.toLowerCase())).length}/${games.length} ${games.length === 1 ? "Game" : "Games"}`}
+              : `${installedGames.filter(g => !filter.trim() || g.name.toLowerCase().includes(filter.toLowerCase())).length}/${installedGames.length} ${installedGames.length === 1 ? "Game" : "Games"}`}
           </span>
           <div className="games-list-actions">
             <button
@@ -1837,10 +1972,10 @@ export function GamesView() {
               <span className="animate-spin" style={{ display: "inline-block" }}><Icon.Refresh /></span>
               Scanning Steam library…
             </div>
-          ) : games.length === 0 ? (
+          ) : installedGames.length === 0 ? (
             <div className="settings-empty">No games found in Steam library.</div>
           ) : (
-            games.filter(g =>
+            installedGames.filter(g =>
               !filter.trim() ||
               g.name.toLowerCase().includes(filter.toLowerCase())
             ).map(game => (
@@ -1864,6 +1999,43 @@ export function GamesView() {
             ))
           )}
         </div>
+
+        {notInstalledGames.length > 0 && (
+          <div style={{ padding: "6px 12px 8px", borderTop: "1px solid #1e1e1e" }}>
+            <button
+              onClick={() => setShowNotInstalled(v => !v)}
+              style={{ background: "none", border: "none", color: "#8a9ab0",
+                       fontSize: 11, cursor: "pointer", padding: 0 }}
+            >
+              {showNotInstalled ? "Hide" : `${notInstalledGames.length} not installed , show`}
+            </button>
+            {showNotInstalled && (
+              <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+                {notInstalledGames.map(g => (
+                  <div key={g.path} style={{ display: "flex", justifyContent: "space-between",
+                                               alignItems: "center", fontSize: 11, color: "#9a9a9a", gap: 8 }}>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                          title="Steam has no manifest (or no longer a fully-installed one) for this directory">
+                      {g.name}
+                      {g.leftover_bytes != null && (
+                        <> · {(g.leftover_bytes / (1024 * 1024)).toFixed(0)} MB</>
+                      )}
+                    </span>
+                    <button
+                      onClick={() => handleDeleteLeftover(g)}
+                      disabled={deletingLeftover === g.path}
+                      style={{ background: "none", border: "none", color: "#ff6b6b",
+                               fontSize: 11, cursor: "pointer", padding: 0, flexShrink: 0 }}
+                      title="Permanently delete these leftover files from disk"
+                    >
+                      {deletingLeftover === g.path ? "Deleting…" : "Delete leftovers"}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {hiddenGames.length > 0 && (
           <div style={{ padding: "6px 12px 8px", borderTop: "1px solid #1e1e1e" }}>
@@ -1896,7 +2068,10 @@ export function GamesView() {
           </div>
         )}
         {hideMsg && (
-          <p style={{ fontSize: 11, color: "#ff6b6b", margin: "6px 12px 0" }}>
+          <p style={{
+            fontSize: 11, margin: "6px 12px 0",
+            color: hideMsg.startsWith("Couldn't") ? "#ff6b6b" : "#76b900",
+          }}>
             {hideMsg}
           </p>
         )}
@@ -1932,6 +2107,25 @@ export function GamesView() {
                     title="Launch via Steam , uses your per-game Proton selection"
                   >
                     <Icon.Gamepad /> {launching ? "Launching…" : "Launch"}
+                  </button>
+                )}
+                {selected.appid && renderdocAvailable && (
+                  <button
+                    className="btn-revert"
+                    onClick={handleCaptureLaunch}
+                    disabled={capturing || launching}
+                    title="Launch with RenderDoc's Vulkan capture layer armed , a real GPU frame debugger you drive yourself in qrenderdoc"
+                  >
+                    <Icon.Activity /> {capturing ? "Arming…" : "Capture"}
+                  </button>
+                )}
+                {selected.appid && renderdocAvailable && captureArmedAt != null && (
+                  <button
+                    className="btn-revert"
+                    onClick={handleOpenCapture}
+                    title="Open the newest .rdc written since capture was armed, in qrenderdoc"
+                  >
+                    <Icon.Package /> Open Capture
                   </button>
                 )}
                 {stuckAppid === selected.appid && (
@@ -2057,6 +2251,47 @@ export function GamesView() {
                   </span>
                 ) : null}
 
+                {selected.appid && (
+                  <span
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      fontSize: 11, padding: "2px 7px", borderRadius: 4,
+                      background: compatTool === "greenboost-proton"
+                        ? "rgba(118,185,0,0.10)" : "rgba(154,154,154,0.10)",
+                      border: `1px solid ${compatTool === "greenboost-proton"
+                        ? "rgba(118,185,0,0.35)" : "rgba(154,154,154,0.25)"}`,
+                      color: compatTool === "greenboost-proton" ? "#76b900" : "#9a9a9a",
+                    }}
+                    title="Which Proton build Steam actually launches this game with , read from config.vdf's CompatToolMapping"
+                  >
+                    {compatTool === "greenboost-proton"
+                      ? "GreenBoost Proton"
+                      : compatTool
+                        ? `Proton: ${compatTool}`
+                        : "Steam default Proton"}
+                    <button
+                      onClick={handleToggleCompatTool}
+                      disabled={togglingCompatTool}
+                      style={{
+                        background: "none", border: "none", padding: 0,
+                        cursor: togglingCompatTool ? "default" : "pointer",
+                        color: "inherit", textDecoration: "underline",
+                        fontSize: 11, opacity: togglingCompatTool ? 0.6 : 1,
+                      }}
+                    >
+                      {togglingCompatTool
+                        ? "…"
+                        : compatTool === "greenboost-proton" ? "Unset" : "Use GreenBoost Proton"}
+                    </button>
+                  </span>
+                )}
+                {selected.appid && lastLaunchEpoch != null && (
+                  <span style={{ fontSize: 11, color: "#8a9ab0" }}
+                        title="When the GreenBoost Proton wrapper last wrote to this game's log">
+                    Last GreenBoost launch: {new Date(lastLaunchEpoch * 1000).toLocaleString()}
+                  </span>
+                )}
+
                 {/* Per-game intelligence badges from session telemetry */}
                 {gameAnalytics && (() => {
                   const hasVramData = gameAnalytics.peak_vram_mb > 0;
@@ -2138,23 +2373,55 @@ export function GamesView() {
               </div>
             </div>
 
-            {(msg || dlssMsg) && (
+            {(msg || dlssMsg || captureMsg || compatToolMsg) && (
               <div className="game-msg-bar">
                 {msg && <span className="status-msg">{msg}</span>}
                 {dlssMsg && <span className="status-msg" style={{ color: "#76b900" }}>{dlssMsg}</span>}
+                {captureMsg && <span className="status-msg">{captureMsg}</span>}
+                {compatToolMsg && <span className="status-msg">{compatToolMsg}</span>}
               </div>
             )}
 
             <div className="game-detail-body">
-            {selected.dlls.length > 0 && (
-              <DllPicker game={selected}
-                         onApplied={() => { loadGames(); void handleScanDlssStatus(); }}
-                         refreshTrigger={cacheRevision}
-                         dlssStatus={dlssStatus}
-                         scanningDlss={scanningDlss}
-                         scanError={dlssScanError}
-                         onScanDlssStatus={handleScanDlssStatus}
-                         onRestoreToShipped={handleRestoreDlssToOriginal} />
+            {selected?.appid && gameOverrides && (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap",
+                padding: "8px 16px 10px", borderBottom: "1px solid #1e1e1e",
+              }}>
+                <span style={{ fontSize: 11, color: "#8a9ab0", flexShrink: 0 }}>Game profile:</span>
+                <select
+                  className="gs-select"
+                  style={{ minWidth: 120, flex: "0 1 140px" }}
+                  value={selectedGspName}
+                  onChange={e => setSelectedGspName(e.target.value)}
+                >
+                  <option value={DEFAULT_GSP_ID}>Default</option>
+                  {gameSettingProfiles.map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+                <button className="btn-revert" style={{ padding: "4px 9px", fontSize: 11 }}
+                        disabled={!selectedGspName || selectedGspName === DEFAULT_GSP_ID}
+                        onClick={handleGspLoad}>Load</button>
+                <button className="btn-revert" style={{ padding: "4px 9px", fontSize: 11,
+                                                        borderColor: "#e05252", color: "#e05252" }}
+                        disabled={!selectedGspName || selectedGspName === DEFAULT_GSP_ID}
+                        onClick={handleGspDelete}>Delete</button>
+                <div style={{ display: "flex", gap: 5, flex: 1, minWidth: 140 }}>
+                  <input
+                    type="text"
+                    className="gs-input-text"
+                    placeholder="Save as…"
+                    style={{ flex: 1, minWidth: 0 }}
+                    value={gspInput}
+                    onChange={e => setGspInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") handleGspSave(); }}
+                  />
+                  <button className="btn-optimize" style={{ padding: "4px 10px", fontSize: 11 }}
+                          disabled={!gspInput.trim()} onClick={handleGspSave}>Save</button>
+                </div>
+                {gspMsg && (
+                  <span style={{ fontSize: 11, color: "#9a9ab0", width: "100%" }}>{gspMsg}</span>
+                )}
+              </div>
             )}
 
             {directStorageInfo?.detected && (
@@ -2176,45 +2443,19 @@ export function GamesView() {
               </div>
             )}
 
+            {selected.dlls.length > 0 && (
+              <DllPicker game={selected}
+                         onApplied={() => { loadGames(); void handleScanDlssStatus(); }}
+                         refreshTrigger={cacheRevision}
+                         dlssStatus={dlssStatus}
+                         scanningDlss={scanningDlss}
+                         scanError={dlssScanError}
+                         onScanDlssStatus={handleScanDlssStatus}
+                         onRestoreToShipped={handleRestoreDlssToOriginal} />
+            )}
+
             {selected?.appid && gameOverrides && (
               <>
-              {/* Game Setting Profile bar */}
-              <div style={{
-                display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap",
-                padding: "8px 16px 10px", borderBottom: "1px solid #1e1e1e",
-              }}>
-                <span style={{ fontSize: 11, color: "#8a9ab0", flexShrink: 0 }}>Game profile:</span>
-                <select
-                  className="gs-select"
-                  style={{ minWidth: 120, flex: "0 1 140px" }}
-                  value={selectedGspName}
-                  onChange={e => setSelectedGspName(e.target.value)}
-                >
-                  <option value="">, select ,</option>
-                  {gameSettingProfiles.map(n => <option key={n} value={n}>{n}</option>)}
-                </select>
-                <button className="btn-revert" style={{ padding: "4px 9px", fontSize: 11 }}
-                        disabled={!selectedGspName} onClick={handleGspLoad}>Load</button>
-                <button className="btn-revert" style={{ padding: "4px 9px", fontSize: 11,
-                                                        borderColor: "#e05252", color: "#e05252" }}
-                        disabled={!selectedGspName} onClick={handleGspDelete}>Delete</button>
-                <div style={{ display: "flex", gap: 5, flex: 1, minWidth: 140 }}>
-                  <input
-                    type="text"
-                    className="gs-input-text"
-                    placeholder="Save as…"
-                    style={{ flex: 1, minWidth: 0 }}
-                    value={gspInput}
-                    onChange={e => setGspInput(e.target.value)}
-                    onKeyDown={e => { if (e.key === "Enter") handleGspSave(); }}
-                  />
-                  <button className="btn-optimize" style={{ padding: "4px 10px", fontSize: 11 }}
-                          disabled={!gspInput.trim()} onClick={handleGspSave}>Save</button>
-                </div>
-                {gspMsg && (
-                  <span style={{ fontSize: 11, color: "#9a9ab0", width: "100%" }}>{gspMsg}</span>
-                )}
-              </div>
               <CollapsibleSection title="GREENBOOST OVERRIDES" defaultOpen
                 subtitle={`${overrideActiveCount} active · ${overrideDiffKeys.length} differ from recommended`}>
                 <div style={{
@@ -2230,7 +2471,10 @@ export function GamesView() {
                     style={{ padding: "4px 10px", fontSize: 11 }}
                     disabled={savingOverrides || overrideDiffKeys.length === 0}
                     onClick={applyAllRecommended}
-                    title="Set every recommended field (DLSS Latest, gplasync, Performance Lock, Compositor Suspend, VK Pipeline Cache, GameMode) in one write"
+                    title={"Set every recommended field (DLSS Latest, gplasync, Performance Lock, "
+                      + "Compositor Suspend, GameMode"
+                      + (VULKAN_LAYER_VISIBLE ? ", VK Pipeline Cache" : "")
+                      + ") in one write"}
                   >
                     Apply all recommended
                   </button>
@@ -2264,49 +2508,54 @@ export function GamesView() {
                     </div>
                   </div>
 
-                  {/* NIS */}
-                  <div className="gs-row" style={{ padding: "10px 16px", cursor: "pointer" }}
-                       onClick={() => {
-                         const nis: GameNisConfig | null = gameOverrides.nis
-                           ? null
-                           : { enabled: true, sharpness: 0.5, scale: 1.0 };
-                         saveOverrides({ nis });
-                       }}>
-                    <div className="gs-row-label">
-                      <div className="gs-row-title">NIS (NVIDIA Image Scaling){GS_INFO["NIS (NVIDIA Image Scaling)"] && <InfoTip>{GS_INFO["NIS (NVIDIA Image Scaling)"]}</InfoTip>}</div>
-                      <div className="gs-row-sub">Sharpening + upscaling via Vulkan layer</div>
-                    </div>
-                    <div className="gs-row-control">
-                      <div className={`toggle${gameOverrides.nis?.enabled ? " on" : ""}`}>
-                        <div className="toggle-track" /><div className="toggle-thumb" />
+                  {/* NIS , via Vulkan layer, hidden while it's alpha-stage and off
+                      by default. See VULKAN_LAYER_VISIBLE at the top of this file. */}
+                  {VULKAN_LAYER_VISIBLE && (
+                    <>
+                      <div className="gs-row" style={{ padding: "10px 16px", cursor: "pointer" }}
+                           onClick={() => {
+                             const nis: GameNisConfig | null = gameOverrides.nis
+                               ? null
+                               : { enabled: true, sharpness: 0.5, scale: 1.0 };
+                             saveOverrides({ nis });
+                           }}>
+                        <div className="gs-row-label">
+                          <div className="gs-row-title">NIS (NVIDIA Image Scaling){GS_INFO["NIS (NVIDIA Image Scaling)"] && <InfoTip>{GS_INFO["NIS (NVIDIA Image Scaling)"]}</InfoTip>}</div>
+                          <div className="gs-row-sub">Sharpening + upscaling via Vulkan layer</div>
+                        </div>
+                        <div className="gs-row-control">
+                          <div className={`toggle${gameOverrides.nis?.enabled ? " on" : ""}`}>
+                            <div className="toggle-track" /><div className="toggle-thumb" />
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                  {gameOverrides.nis && (
-                    <div style={{ padding: "0 16px 10px 32px", display: "flex", gap: 20 }}>
-                      <div>
-                        <div className="gs-row-sub" style={{ marginBottom: 4 }}>Sharpness</div>
-                        <input type="range" min={0} max={1} step={0.05}
-                          value={gameOverrides.nis.sharpness}
-                          onChange={e => saveOverrides({ nis: { ...gameOverrides.nis!, sharpness: parseFloat(e.target.value) } })}
-                          style={{ width: 140 }} />
-                        <span style={{ fontSize: 11, color: "#9a9a9a", marginLeft: 8 }}>
-                          {gameOverrides.nis.sharpness.toFixed(2)}
-                          {gameOverrides.nis.sharpness === 0 && " (no sharpening)"}
-                        </span>
-                      </div>
-                      <div>
-                        <div className="gs-row-sub" style={{ marginBottom: 4 }}>Scale</div>
-                        <input type="range" min={0.5} max={1} step={0.05}
-                          value={gameOverrides.nis.scale}
-                          onChange={e => saveOverrides({ nis: { ...gameOverrides.nis!, scale: parseFloat(e.target.value) } })}
-                          style={{ width: 140 }} />
-                        <span style={{ fontSize: 11, color: "#9a9a9a", marginLeft: 8 }}>
-                          {gameOverrides.nis.scale.toFixed(2)}
-                          {gameOverrides.nis.scale >= 1 ? " (no upscale, sharpen only)" : ` (render at ${(gameOverrides.nis.scale * 100).toFixed(0)}%, upscaled back up)`}
-                        </span>
-                      </div>
-                    </div>
+                      {gameOverrides.nis && (
+                        <div style={{ padding: "0 16px 10px 32px", display: "flex", gap: 20 }}>
+                          <div>
+                            <div className="gs-row-sub" style={{ marginBottom: 4 }}>Sharpness</div>
+                            <input type="range" min={0} max={1} step={0.05}
+                              value={gameOverrides.nis.sharpness}
+                              onChange={e => saveOverrides({ nis: { ...gameOverrides.nis!, sharpness: parseFloat(e.target.value) } })}
+                              style={{ width: 140 }} />
+                            <span style={{ fontSize: 11, color: "#9a9a9a", marginLeft: 8 }}>
+                              {gameOverrides.nis.sharpness.toFixed(2)}
+                              {gameOverrides.nis.sharpness === 0 && " (no sharpening)"}
+                            </span>
+                          </div>
+                          <div>
+                            <div className="gs-row-sub" style={{ marginBottom: 4 }}>Scale</div>
+                            <input type="range" min={0.5} max={1} step={0.05}
+                              value={gameOverrides.nis.scale}
+                              onChange={e => saveOverrides({ nis: { ...gameOverrides.nis!, scale: parseFloat(e.target.value) } })}
+                              style={{ width: 140 }} />
+                            <span style={{ fontSize: 11, color: "#9a9a9a", marginLeft: 8 }}>
+                              {gameOverrides.nis.scale.toFixed(2)}
+                              {gameOverrides.nis.scale >= 1 ? " (no upscale, sharpen only)" : ` (render at ${(gameOverrides.nis.scale * 100).toFixed(0)}%, upscaled back up)`}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </>
                   )}
 
                   {/* HDR */}
@@ -2344,21 +2593,27 @@ export function GamesView() {
                   </div>
                 </CollapsibleSection>
 
-                <CollapsibleSection title="Latency" defaultOpen={false}>
-                  {/* Reflex */}
-                  <div className="gs-row" style={{ padding: "10px 16px", cursor: "pointer" }}
-                       onClick={() => saveOverrides({ reflex: !gameOverrides.reflex })}>
-                    <div className="gs-row-label">
-                      <div className="gs-row-title">NVIDIA Reflex (lower input lag){GS_INFO["NVIDIA Reflex"] && <InfoTip>{GS_INFO["NVIDIA Reflex"]}</InfoTip>}</div>
-                      <div className="gs-row-sub">Reduces latency via VK_NV_low_latency2</div>
-                    </div>
-                    <div className="gs-row-control">
-                      <div className={`toggle${gameOverrides.reflex ? " on" : ""}`}>
-                        <div className="toggle-track" /><div className="toggle-thumb" />
+                {/* Latency/Reflex , via VK_NV_low_latency2 in the Vulkan layer,
+                    hidden while it's alpha-stage and off by default (the only
+                    row this section had, so the section itself is skipped
+                    rather than left with an empty header). See
+                    VULKAN_LAYER_VISIBLE at the top of this file. */}
+                {VULKAN_LAYER_VISIBLE && (
+                  <CollapsibleSection title="Latency" defaultOpen={false}>
+                    <div className="gs-row" style={{ padding: "10px 16px", cursor: "pointer" }}
+                         onClick={() => saveOverrides({ reflex: !gameOverrides.reflex })}>
+                      <div className="gs-row-label">
+                        <div className="gs-row-title">NVIDIA Reflex (lower input lag){GS_INFO["NVIDIA Reflex"] && <InfoTip>{GS_INFO["NVIDIA Reflex"]}</InfoTip>}</div>
+                        <div className="gs-row-sub">Reduces latency via VK_NV_low_latency2</div>
+                      </div>
+                      <div className="gs-row-control">
+                        <div className={`toggle${gameOverrides.reflex ? " on" : ""}`}>
+                          <div className="toggle-track" /><div className="toggle-thumb" />
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </CollapsibleSection>
+                  </CollapsibleSection>
+                )}
 
                 <CollapsibleSection title="System" defaultOpen={false}>
                   {/* CPU Governor */}
@@ -2403,7 +2658,8 @@ export function GamesView() {
 
                 <CollapsibleSection title="Runtime Overrides"
                   subtitle="null = use global setting"
-                  defaultOpen={(["gplasync", "perf_lock", "compositor_suspend", "vk_pipeline_cache"] as const)
+                  defaultOpen={(["gplasync", "perf_lock", "compositor_suspend",
+                    ...(VULKAN_LAYER_VISIBLE ? ["vk_pipeline_cache" as const] : [])] as const)
                     .some(k => overrideDiffKeys.includes(k))}>
                   {(
                     [
@@ -2416,7 +2672,16 @@ export function GamesView() {
                       { key: "gplasync",           label: "Background shader compiling",   desc: "Async pipeline compilation (dxvk-gplasync) , eliminates shader-comp stutter" },
                       { key: "perf_lock",          label: "Performance lock (CPU + GPU)",  desc: "CPU governor + GPU power limit locked for this game" },
                       { key: "compositor_suspend", label: "Pause desktop effects while playing", desc: "Pause KWin/GNOME effects for the duration of the game" },
-                      { key: "vk_pipeline_cache",  label: "Remember compiled shaders",     desc: "Persist compiled VkPipelineCache to disk across sessions" },
+                      // Lives entirely inside greenboost_vulkan_layer.c, same as
+                      // the All Games row it mirrors , hidden with it while the
+                      // layer defaults off (VULKAN_LAYER_VISIBLE, top of file).
+                      // Real gap found 2026-09-02: this per-game override list
+                      // was never gated the same way the All Games row was,
+                      // so this control kept offering a setting with nothing
+                      // behind it while the layer was off.
+                      ...(VULKAN_LAYER_VISIBLE ? [
+                        { key: "vk_pipeline_cache" as const, label: "Remember compiled shaders", desc: "Persist compiled VkPipelineCache to disk across sessions" },
+                      ] : []),
                     ] as const
                   ).map(({ key, label, desc }) => {
                     const cur = gameOverrides[key] as boolean | null;
@@ -2528,54 +2793,19 @@ export function GamesView() {
                   </div>
                 </CollapsibleSection>
 
-                <CollapsibleSection title="External DLLs"
-                  defaultOpen={gameOverrides.external_dlls_enabled}>
-                  <div className="gs-row" style={{ padding: "10px 16px", cursor: "pointer" }}
-                       onClick={() => saveOverrides({ external_dlls_enabled: !gameOverrides.external_dlls_enabled })}>
-                    <div className="gs-row-label">
-                      <div className="gs-row-title">Use external DLL folder{GS_INFO["External DLL folder"] && <InfoTip>{GS_INFO["External DLL folder"]}</InfoTip>}</div>
-                      <div className="gs-row-sub">
-                        GreenBoost never downloads or supplies these files , point this at
-                        DLLs you already obtained and placed yourself.
-                      </div>
-                    </div>
-                    <div className="gs-row-control">
-                      <div className={`toggle${gameOverrides.external_dlls_enabled ? " on" : ""}`}>
-                        <div className="toggle-track" /><div className="toggle-thumb" />
-                      </div>
-                    </div>
-                  </div>
-                  <div style={{ padding: "8px 16px" }}>
-                    <div className="gs-row-title" style={{ marginBottom: 4 }}>
-                      Folder path
-                    </div>
-                    <input
-                      type="text"
-                      className="settings-current-input"
-                      style={{ width: "100%", maxWidth: 400 }}
-                      placeholder="/home/you/my-dlls"
-                      value={gameOverrides.external_dll_dir}
-                      disabled={savingOverrides}
-                      onBlur={e => saveOverrides({ external_dll_dir: e.target.value.trim() })}
-                      onChange={e => {
-                        const dir = e.target.value;
-                        setGameOverrides(prev => prev ? { ...prev, external_dll_dir: dir } : prev);
-                      }}
-                    />
-                    {gameOverrides.external_dlls_enabled && !gameOverrides.external_dll_dir && (
-                      <p style={{ fontSize: 11, color: "#8a9ab0", margin: "6px 0 0" }}>
-                        Enabled, but no folder is set , the game will launch normally with no overlay.
-                      </p>
-                    )}
-                  </div>
-                </CollapsibleSection>
-
                 {overridesMsg && (
                   <p style={{ fontSize: 11, color: "#8a9ab0", padding: "8px 16px 0" }}>
                     {overridesMsg}
                   </p>
                 )}
               </CollapsibleSection>
+
+              <Dlss5Panel
+                game={selected}
+                appid={selected.appid}
+                gameOverrides={gameOverrides}
+                saveOverrides={saveOverrides}
+              />
               </>
             )}
 

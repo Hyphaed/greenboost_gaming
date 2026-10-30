@@ -804,11 +804,35 @@ install -m 0755 "$local_bin" "$APP_LIB_DIR/greenboost-gaming-gui"
 # install and made the Proton wrapper's `from gb_gaming import
 # global_settings` fail every time.
 if [[ -d "$PROJECT_ROOT/gb_gaming" ]]; then
+    # Prune modules renamed/removed from gb_gaming/ , real incident,
+    # 2026-09-02: optiscaler_installer.py (renamed to dlss5_runtime.py) was
+    # still importable from here after a clean install because this loop
+    # only ever ADDS files present in the source tree. The $HOME mirror
+    # below already had this exact prune; the system copy didn't.
+    if [[ -d "$APP_LIB_DIR/gb_gaming" ]]; then
+        for existing in "$APP_LIB_DIR/gb_gaming"/*.py; do
+            [[ -e "$existing" ]] || continue
+            [[ -f "$PROJECT_ROOT/gb_gaming/$(basename "$existing")" ]] || \
+                rm -f "$existing"
+        done
+    fi
     install -d "$APP_LIB_DIR/gb_gaming"
     for f in "$PROJECT_ROOT"/gb_gaming/*.py; do
         install -m 0644 "$f" "$APP_LIB_DIR/gb_gaming/$(basename "$f")"
     done
     ok "gb_gaming backend modules installed"
+fi
+
+# GreenBoostDLSS5 (DLSS 5 Neural Rendering) runtime , staged as a sibling of
+# gb_gaming/ so gb_gaming/dlss5_runtime.py's own parent.parent-relative
+# lookup resolves it without hardcoding $LIBDIR. This is the repo's one
+# built-binary exception (MIT-licensed, GreenBoost's own build , see
+# libraries/dlssnr/FORK_NOTES.md); everything else the Suite installs is
+# either source or fetched live at use time.
+if [[ -d "$PROJECT_ROOT/libraries/dlssnr/runtime" ]]; then
+    install -d "$APP_LIB_DIR/libraries/dlssnr/runtime"
+    cp -r "$PROJECT_ROOT"/libraries/dlssnr/runtime/. "$APP_LIB_DIR/libraries/dlssnr/runtime/"
+    ok "DLSS 5 (Neural Rendering) runtime installed"
 fi
 
 # ── install: runtime mirror into $HOME (Pressure Vessel containment) ──
@@ -855,6 +879,42 @@ if [[ -n "$_REAL_USER" && -n "$_REAL_HOME" && -d "$_REAL_HOME" ]]; then
             install -m 0644 -o "$_REAL_USER" "$f" \
                 "$_USER_GB_GAMING_DIR/$(basename "$f")"
         done
+    fi
+
+    # GreenBoostDLSS5 runtime, mirrored the same way and for the same
+    # reason as gb_gaming/ above: the Proton wrapper runs inside Steam's
+    # pressure-vessel sandbox, which bind-mounts $HOME but not /usr/local,
+    # so gb_gaming.dlss5_runtime's parent.parent-relative lookup needs a
+    # copy under $HOME too, staged as a sibling of the $HOME gb_gaming/ copy.
+    if [[ -d "$PROJECT_ROOT/libraries/dlssnr/runtime" ]]; then
+        _USER_DLSS5_RUNTIME_DIR="$_REAL_HOME/.local/lib/greenboost-gaming/libraries/dlssnr/runtime"
+        install -d -o "$_REAL_USER" "$_USER_DLSS5_RUNTIME_DIR"
+        cp -r "$PROJECT_ROOT"/libraries/dlssnr/runtime/. "$_USER_DLSS5_RUNTIME_DIR/"
+        chown -R "$_REAL_USER" "$_REAL_HOME/.local/lib/greenboost-gaming/libraries"
+    fi
+
+    # DLSS 5 (Neural Rendering) assets , gb_gaming.dlss5.asset_dir() falls
+    # back to this exact path once the dev-tree assets/dlss5/ (gitignored,
+    # never installed) is out of reach, e.g. because gb_gaming now lives
+    # under $APP_LIB_DIR instead of the repo. Only the top-level DLLs and
+    # the pristine add-on are mirrored , never games/ (per-game staging,
+    # symlinks the app itself regenerates at the destination on demand) or
+    # addons/patched/ (regenerated the same way). Skipped entirely, with no
+    # warning, when the user has never populated assets/dlss5/ , this
+    # feature is opt-in and its assets are never fetched or bundled by this
+    # project (see docs/dlss5-external-folders.md).
+    if [[ -d "$PROJECT_ROOT/assets/dlss5" ]]; then
+        _USER_DLSS5_DIR="$_REAL_HOME/.local/share/greenboost/dlss5"
+        install -d -o "$_REAL_USER" "$_USER_DLSS5_DIR" "$_USER_DLSS5_DIR/addons"
+        for f in "$PROJECT_ROOT"/assets/dlss5/*.dll; do
+            [[ -e "$f" ]] || continue
+            install -m 0644 -o "$_REAL_USER" "$f" "$_USER_DLSS5_DIR/$(basename "$f")"
+        done
+        for f in "$PROJECT_ROOT"/assets/dlss5/addons/*.addon64; do
+            [[ -e "$f" ]] || continue
+            install -m 0644 -o "$_REAL_USER" "$f" "$_USER_DLSS5_DIR/addons/$(basename "$f")"
+        done
+        ok "DLSS 5 assets mirrored to $_USER_DLSS5_DIR"
     fi
 
     # The home manifest needs its OWN library_path , copying the system

@@ -128,10 +128,10 @@ pub fn check_proton_directstorage_capable() -> (Option<bool>, String) {
 
 /// Best-effort: is the block device backing `path` an NVMe drive?
 /// Resolves the mount source via /proc/mounts (longest-prefix match against
-/// the canonicalized path), then follows dm-mapper/LVM/LUKS through
-/// /sys/class/block/<name>/slaves/ if present. Returns None (not a guess)
-/// when the source isn't a local block device at all (network mount,
-/// overlay, etc.) or the resolution chain can't be followed.
+/// the canonicalized path), then hands off to `is_nvme_device` to walk any
+/// dm-mapper stacking on top of it. Returns None (not a guess) when the
+/// source isn't a local block device at all (network mount, overlay, etc.)
+/// or the resolution chain can't be followed.
 pub fn is_nvme_storage(path: &Path) -> Option<bool> {
     let canon = std::fs::canonicalize(path).ok()?;
     let mounts = std::fs::read_to_string("/proc/mounts").ok()?;
@@ -152,38 +152,63 @@ pub fn is_nvme_storage(path: &Path) -> Option<bool> {
         }
     }
     let (_, source) = best_match?;
-    let dev_name = source.strip_prefix("/dev/")?;
+    is_nvme_device(&source, Path::new("/sys/class/block"))
+}
 
+/// Resolves a `/dev/...` mount source to whether it's ultimately backed by
+/// NVMe. `sysfs_root` is parameterized (normally `/sys/class/block`) so the
+/// slaves-walk below is testable against a fixture tree.
+fn is_nvme_device(source: &str, sysfs_root: &Path) -> Option<bool> {
+    let dev_name = source.strip_prefix("/dev/")?;
     if dev_name.starts_with("nvme") { return Some(true); }
 
-    if dev_name.starts_with("dm-") || source.starts_with("/dev/mapper/") {
-        // LVM/LUKS: resolve to the real underlying device(s) and check those.
-        let slaves_dir = PathBuf::from(format!("/sys/class/block/{dev_name}/slaves"));
-        let real_name = if slaves_dir.is_dir() {
-            dev_name.to_string()
-        } else {
-            // /dev/mapper/<name> is a symlink to the real /dev/dm-N node.
-            std::fs::canonicalize(&source).ok()
-                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-                .unwrap_or_else(|| dev_name.to_string())
-        };
-        let slaves_dir = PathBuf::from(format!("/sys/class/block/{real_name}/slaves"));
-        if let Ok(entries) = std::fs::read_dir(&slaves_dir) {
-            for entry in entries.flatten() {
-                if entry.file_name().to_string_lossy().starts_with("nvme") {
-                    return Some(true);
-                }
-            }
-            return Some(false);
-        }
-        return None;
-    }
+    let real_name = if dev_name.starts_with("dm-") {
+        dev_name.to_string()
+    } else if source.starts_with("/dev/mapper/") {
+        // /dev/mapper/<name> is a symlink to the real /dev/dm-N node.
+        std::fs::canonicalize(source).ok()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))?
+    } else {
+        // Plain partition or disk (e.g. sda1) , not a mapper node, so there's
+        // no slaves chain underneath it to walk.
+        return Some(false);
+    };
 
-    // Plain partition (e.g. sda1) → strip trailing partition digits to get
-    // the parent disk name for a definitive non-NVMe classification.
-    let base: String = dev_name.trim_end_matches(|c: char| c.is_ascii_digit()).to_string();
-    if base.is_empty() { return None; }
-    Some(false)
+    walk_slaves(&real_name, sysfs_root, 0, &mut std::collections::HashSet::new())
+}
+
+/// Recursively follows a mapper device's `slaves/` directory , a stacked
+/// setup (LVM on top of a LUKS crypt target, for example) can be more than
+/// one layer deep, and checking only the immediate slave misclassifies NVMe
+/// storage sitting one hop further down as "not NVMe". Depth-limited and
+/// cycle-guarded so a malformed sysfs tree can't loop forever.
+///
+/// Returns Some(true) on the first `nvme*` name found anywhere in the
+/// chain, Some(false) if the walk completes with none, None if a slaves
+/// directory is missing partway through (chain broke) or the depth cap hit.
+fn walk_slaves(
+    name: &str,
+    sysfs_root: &Path,
+    depth: u32,
+    visited: &mut std::collections::HashSet<String>,
+) -> Option<bool> {
+    const MAX_DEPTH: u32 = 8;
+    if depth > MAX_DEPTH { return None; }
+    if !visited.insert(name.to_string()) { return Some(false); } // cycle guard
+
+    let slaves_dir = sysfs_root.join(name).join("slaves");
+    let entries = std::fs::read_dir(&slaves_dir).ok()?;
+
+    let mut found_any = false;
+    for entry in entries.flatten() {
+        found_any = true;
+        let slave_name = entry.file_name().to_string_lossy().to_string();
+        if slave_name.starts_with("nvme") { return Some(true); }
+        if let Some(true) = walk_slaves(&slave_name, sysfs_root, depth + 1, visited) {
+            return Some(true);
+        }
+    }
+    if found_any { Some(false) } else { None }
 }
 
 pub fn get_directstorage_info(game_path: &Path) -> DirectStorageInfo {
@@ -195,5 +220,87 @@ pub fn get_directstorage_info(game_path: &Path) -> DirectStorageInfo {
         proton_capable,
         proton_build,
         nvme_storage: is_nvme_storage(game_path),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// A throwaway directory under the real temp dir, unique per test so
+    /// parallel `cargo test` runs never collide. Not a fixture crate , just
+    /// enough std::fs to build a fake /sys/class/block tree.
+    struct TmpDir(PathBuf);
+    impl TmpDir {
+        fn new(tag: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "gb_directstorage_test_{tag}_{}_{:?}",
+                std::process::id(),
+                std::thread::current().id(),
+            ));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).unwrap();
+            TmpDir(dir)
+        }
+        fn path(&self) -> &Path { &self.0 }
+    }
+    impl Drop for TmpDir {
+        fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
+    }
+
+    /// `slaves/` entries are normally symlinks to the real device's sysfs
+    /// dir; the walk only reads the entry's file name, so a plain empty
+    /// file stands in fine.
+    fn make_block_dev(root: &Path, name: &str, slaves: &[&str]) {
+        let slaves_dir = root.join(name).join("slaves");
+        fs::create_dir_all(&slaves_dir).unwrap();
+        for s in slaves {
+            fs::write(slaves_dir.join(s), b"").unwrap();
+        }
+    }
+
+    #[test]
+    fn direct_nvme_partition_is_nvme() {
+        // Name-prefix short-circuit , no sysfs walk needed at all.
+        assert_eq!(is_nvme_device("/dev/nvme0n1p3", Path::new("/nonexistent")), Some(true));
+    }
+
+    #[test]
+    fn plain_sata_partition_is_not_nvme() {
+        assert_eq!(is_nvme_device("/dev/sda1", Path::new("/nonexistent")), Some(false));
+    }
+
+    #[test]
+    fn lvm_on_luks_on_nvme_is_nvme() {
+        // Real shape confirmed on this machine: LVM (dm-1) on a LUKS crypt
+        // target (dm-0) on an NVMe partition. A single-level slaves check
+        // stops at dm-0 and misreports "not NVMe"; the walk must recurse.
+        let tmp = TmpDir::new("lvm_on_luks_on_nvme");
+        make_block_dev(tmp.path(), "dm-1", &["dm-0"]);
+        make_block_dev(tmp.path(), "dm-0", &["nvme0n1p3"]);
+        assert_eq!(is_nvme_device("/dev/dm-1", tmp.path()), Some(true));
+    }
+
+    #[test]
+    fn dm_on_sata_is_not_nvme() {
+        let tmp = TmpDir::new("dm_on_sata");
+        make_block_dev(tmp.path(), "dm-0", &["sda1"]);
+        assert_eq!(is_nvme_device("/dev/dm-0", tmp.path()), Some(false));
+    }
+
+    #[test]
+    fn broken_chain_is_unknown() {
+        // dm-1's slaves dir is missing entirely , resolution can't complete.
+        let tmp = TmpDir::new("broken_chain");
+        assert_eq!(is_nvme_device("/dev/dm-1", tmp.path()), None);
+    }
+
+    #[test]
+    fn cycle_does_not_hang() {
+        let tmp = TmpDir::new("cycle");
+        make_block_dev(tmp.path(), "dm-0", &["dm-1"]);
+        make_block_dev(tmp.path(), "dm-1", &["dm-0"]);
+        assert_eq!(is_nvme_device("/dev/dm-0", tmp.path()), Some(false));
     }
 }

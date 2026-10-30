@@ -8,6 +8,9 @@
 
 mod py_bootstrap;
 mod game_overrides;
+mod dll_folders;
+mod dlss5;
+mod renderdoc;
 mod scanner;
 mod optimizer;
 mod manager;
@@ -19,6 +22,7 @@ mod nvml_reader;
 mod live_stats;
 mod nvidia_diag;
 mod directstorage;
+mod controllers;
 mod updates;
 mod nonsteam;
 mod game_lifecycle;
@@ -59,6 +63,7 @@ use crate::manager::{
     set_hdr_enabled as backend_set_hdr_enabled,
     SessionRecord, get_session_history_impl as backend_get_session_history,
     GameAnalytics, analyze_game_sessions_impl as backend_analyze_game_sessions,
+    read_compat_tool, set_compat_tool_impl as backend_set_compat_tool,
 };
 use tauri::ipc::Channel;
 use crate::dlss::{
@@ -98,6 +103,26 @@ use crate::global_settings::{
     load_gs_profile_impl, delete_gs_profile_impl,
 };
 use crate::game_overrides::{GameOverrides, get_impl as backend_get_game_overrides, save_impl as backend_save_game_overrides};
+use crate::dll_folders::{
+    BrowseResult, ExternalDll, FileResult,
+    browse_folder_impl      as backend_browse_folder,
+    inspect_dll_folder_impl as backend_inspect_dll_folder,
+    install_external_folder_impl as backend_install_external_folder,
+    restore_external_folder_impl as backend_restore_external_folder,
+};
+use crate::dlss5::{
+    PreflightCheck, Dlss5EnableResult, Dlss5AssetList, Dlss5SimpleResult,
+    dlss5_preflight_impl    as backend_dlss5_preflight,
+    dlss5_enable_impl       as backend_dlss5_enable,
+    dlss5_disable_impl      as backend_dlss5_disable,
+    dlss5_list_assets_impl  as backend_dlss5_list_assets,
+    dlss5_get_config_impl   as backend_dlss5_get_config,
+    dlss5_set_config_impl   as backend_dlss5_set_config,
+    dlss5_get_asset_dir_impl as backend_dlss5_get_asset_dir,
+    dlss5_set_asset_dir_impl as backend_dlss5_set_asset_dir,
+    resolve_primary_exe_impl as backend_resolve_primary_exe,
+    resolve_game_exe_dir_impl as backend_resolve_game_exe_dir,
+};
 
 #[tauri::command]
 fn get_games() -> Vec<Game> {
@@ -105,8 +130,8 @@ fn get_games() -> Vec<Game> {
 }
 
 #[tauri::command]
-fn hide_game(path: String, name: String) -> Result<(), String> {
-    scanner::hide_game_impl(path, name)
+fn hide_game(path: String, name: String, appid: Option<String>) -> Result<(), String> {
+    scanner::hide_game_impl(path, name, appid)
 }
 
 #[tauri::command]
@@ -117,6 +142,40 @@ fn unhide_game(path: String) -> Result<(), String> {
 #[tauri::command]
 fn list_hidden_games() -> Vec<HiddenGame> {
     scanner::load_hidden_games()
+}
+
+/// Reclaim disk space Steam's uninstaller left behind. Only ever touches a
+/// path that scan_games() itself already reported as `installed: false` ,
+/// see delete_leftover_files_impl()'s own scoping checks for why an
+/// arbitrary path can't reach this.
+#[tauri::command]
+fn delete_leftover_files(path: String) -> Result<u64, String> {
+    scanner::delete_leftover_files_impl(path)
+}
+
+/// Current compat tool Steam has mapped for `appid`, e.g. "greenboost-proton"
+/// or "proton_11" , `None` means Steam's own per-title default applies.
+#[tauri::command]
+fn get_compat_tool(appid: String) -> Option<String> {
+    read_compat_tool(&appid)
+}
+
+/// `enable=true` maps the game to GreenBoost Proton (same path Launch
+/// already takes silently); `enable=false` clears the mapping back to
+/// Steam's default. Either way returns a status string , including the
+/// "restart Steam" warning when Steam is currently running , for the UI to
+/// show next to the toggle.
+#[tauri::command]
+fn set_compat_tool(appid: String, enable: bool) -> Result<String, String> {
+    backend_set_compat_tool(&appid, enable)
+}
+
+/// Unix seconds of this game's last GreenBoost Proton wrapper run, for the
+/// "Last GreenBoost launch" line next to the compat-tool badge. `None` if
+/// the wrapper has never run for this appid.
+#[tauri::command]
+fn get_last_greenboost_launch(appid: String) -> Option<u64> {
+    crate::game_lifecycle::last_launch_epoch(&appid)
 }
 
 /// Check GitLab for newer releases of this Suite and of GreenBoost core.
@@ -732,6 +791,15 @@ fn get_directstorage_info(path: String) -> crate::directstorage::DirectStorageIn
     crate::directstorage::get_directstorage_info(std::path::Path::new(&path))
 }
 
+/// Connected gamepads and what's actually true about each one , driver,
+/// connection type, hidraw readability, battery. See controllers.rs for why
+/// this exists: the Proton wrapper has no input code at all, so a
+/// controller problem is never GreenBoost's to fix, only to surface.
+#[tauri::command]
+fn get_controllers() -> Vec<crate::controllers::ControllerInfo> {
+    crate::controllers::get_controllers()
+}
+
 #[tauri::command]
 async fn upgrade_nvidia_streaming(channel: tauri::ipc::Channel<String>) {
     crate::manager::upgrade_nvidia_streaming(channel);
@@ -775,6 +843,137 @@ fn get_game_overrides(appid: String) -> Result<GameOverrides, String> {
 #[tauri::command]
 fn save_game_overrides(appid: String, overrides: GameOverrides) -> Result<(), String> {
     backend_save_game_overrides(&appid, &overrides)
+}
+
+#[tauri::command]
+fn browse_folder(path: Option<String>) -> Result<BrowseResult, String> {
+    backend_browse_folder(path.as_deref())
+}
+
+#[tauri::command]
+fn inspect_dll_folder(path: String) -> Result<Vec<ExternalDll>, String> {
+    backend_inspect_dll_folder(&path)
+}
+
+#[tauri::command]
+fn install_external_folder(
+    src_dir: String,
+    game_path: String,
+    targets: std::collections::HashMap<String, Vec<String>>,
+    disabled: Vec<String>,
+) -> Result<Vec<FileResult>, String> {
+    backend_install_external_folder(
+        &src_dir, std::path::Path::new(&game_path), &targets, &disabled)
+}
+
+#[tauri::command]
+fn restore_external_folder(
+    game_path: String,
+    targets: std::collections::HashMap<String, Vec<String>>,
+) -> Result<Vec<FileResult>, String> {
+    backend_restore_external_folder(std::path::Path::new(&game_path), &targets)
+}
+
+// ── DLSS 5 (Neural Rendering) ────────────────────────────────────────
+//
+// One-toggle installer over GreenBoost's own DLSS Neural Rendering runtime
+// , see dlss5.rs, gb_gaming/dlss5.py and gb_gaming/dlss5_runtime.py.
+// Rewritten 2026-09-02; the earlier mechanism (a leaked RenoDX "Control"
+// add-on's process-name patch, layered on the external-DLL-overlay /
+// ReShade-add-on mechanism) is gone , see docs/dlss5-external-folders.md.
+
+#[tauri::command]
+fn dlss5_preflight(game_dir: String, appid: String) -> Result<Vec<PreflightCheck>, String> {
+    backend_dlss5_preflight(std::path::Path::new(&game_dir), &appid)
+}
+
+#[tauri::command]
+fn dlss5_enable(game_dir: String, appid: String) -> Result<Dlss5EnableResult, String> {
+    backend_dlss5_enable(std::path::Path::new(&game_dir), &appid)
+}
+
+#[tauri::command]
+fn dlss5_list_assets() -> Result<Dlss5AssetList, String> {
+    backend_dlss5_list_assets()
+}
+
+#[tauri::command]
+fn dlss5_disable(game_dir: String, appid: String) -> Result<Dlss5EnableResult, String> {
+    backend_dlss5_disable(std::path::Path::new(&game_dir), &appid)
+}
+
+/// Reads the Neural Rendering + adjacent-feature config keys out of
+/// `game_dir/GreenBoostDLSS5.ini` , see gb_gaming.dlss5.CONFIG_KEYS for the
+/// full list and Dlss5Panel.tsx for what the UI does with each one.
+#[tauri::command]
+fn dlss5_get_config(game_dir: String) -> Result<std::collections::HashMap<String, String>, String> {
+    backend_dlss5_get_config(std::path::Path::new(&game_dir))
+}
+
+/// Writes one or more Neural Rendering / adjacent-feature config keys into
+/// `game_dir/GreenBoostDLSS5.ini`. Rejects any key not in
+/// gb_gaming.dlss5.CONFIG_KEYS rather than writing an arbitrary ini entry.
+#[tauri::command]
+fn dlss5_set_config(
+    game_dir: String, changes: std::collections::HashMap<String, String>,
+) -> Result<Dlss5SimpleResult, String> {
+    backend_dlss5_set_config(std::path::Path::new(&game_dir), &changes)
+}
+
+/// The folder the user picked via the "Select DLSS5 folder" button, or ""
+/// if none was ever picked , see gb_gaming.dlss5.get_asset_dir_override().
+#[tauri::command]
+fn dlss5_get_asset_dir() -> Result<String, String> {
+    backend_dlss5_get_asset_dir()
+}
+
+/// Persists the folder the user picked as the one to look for
+/// nvngx_dlssnr.dll in going forward. An empty path clears the override.
+#[tauri::command]
+fn dlss5_set_asset_dir(path: String) -> Result<Dlss5SimpleResult, String> {
+    backend_dlss5_set_asset_dir(&path)
+}
+
+#[tauri::command]
+fn resolve_primary_exe(game_dir: String) -> Option<String> {
+    backend_resolve_primary_exe(std::path::Path::new(&game_dir))
+}
+
+/// Finds the directory holding the game's real executable , what DLSS 5
+/// installs the runtime into. See resolve_game_exe_dir_impl's doc comment
+/// (dlss5.rs) for why a plain `resolve_primary_exe` isn't enough on its
+/// own: that only looks inside a directory it's already given, and for a
+/// launcher-stub layout `selected.path` (the Steam install root) isn't it.
+#[tauri::command]
+fn resolve_game_exe_dir(game_dir: String) -> Option<String> {
+    backend_resolve_game_exe_dir(std::path::Path::new(&game_dir))
+        .map(|p| p.to_string_lossy().to_string())
+}
+
+// ── RenderDoc capture ────────────────────────────────────────────────
+//
+// Human-driven GPU frame debugging: the Suite arms capture and launches the
+// game exactly like a normal Launch; a person drives qrenderdoc themselves
+// to inspect whatever they captured. See renderdoc.rs for the mechanism.
+
+#[tauri::command]
+fn renderdoc_available() -> bool {
+    crate::renderdoc::renderdoc_available_impl()
+}
+
+#[tauri::command]
+fn arm_renderdoc_capture(appid: String) -> Result<u64, String> {
+    crate::renderdoc::arm_capture_impl(&appid)
+}
+
+#[tauri::command]
+fn find_renderdoc_capture(since_unix: u64) -> Result<Option<String>, String> {
+    crate::renderdoc::find_capture_since_impl(since_unix)
+}
+
+#[tauri::command]
+fn open_renderdoc_capture(path: String) -> Result<(), String> {
+    crate::renderdoc::open_capture_impl(&path)
 }
 
 // ── System tray ───────────────────────────────────────────────────────
@@ -959,6 +1158,10 @@ fn main() {
             hide_game,
             unhide_game,
             list_hidden_games,
+            delete_leftover_files,
+            get_compat_tool,
+            set_compat_tool,
+            get_last_greenboost_launch,
             get_game_settings,
             set_game_setting,
             get_status,
@@ -1046,8 +1249,27 @@ fn main() {
             upgrade_nvidia_streaming,
             get_dlss_status,
             get_directstorage_info,
+            get_controllers,
             get_game_overrides,
             save_game_overrides,
+            browse_folder,
+            inspect_dll_folder,
+            install_external_folder,
+            restore_external_folder,
+            dlss5_preflight,
+            dlss5_enable,
+            dlss5_disable,
+            dlss5_list_assets,
+            dlss5_get_config,
+            dlss5_set_config,
+            dlss5_get_asset_dir,
+            dlss5_set_asset_dir,
+            resolve_primary_exe,
+            resolve_game_exe_dir,
+            renderdoc_available,
+            arm_renderdoc_capture,
+            find_renderdoc_capture,
+            open_renderdoc_capture,
             get_session_history,
             analyze_game_sessions,
             stop_game,

@@ -38,8 +38,9 @@ for arg in "$@"; do
             echo "  install (default): install greenboost-proton + experimental"
             echo "                     into every detected Steam root"
             echo "  --uninstall:       remove both variants from every Steam root,"
-            echo "                     plus the staged NIS shaders and the"
-            echo "                     dxvk-gplasync download cache under ~/.local/share"
+            echo "                     plus the staged NIS shaders, the"
+            echo "                     dxvk-gplasync download cache, and the RenderDoc"
+            echo "                     capture tool under ~/.local/share"
             exit 0 ;;
         *) echo "Unknown argument: $arg (try --help)" >&2; exit 2 ;;
     esac
@@ -63,8 +64,13 @@ if [[ "$MODE" == "uninstall" ]]; then
     # of staged shaders and a downloaded DXVK build on disk, and the next
     # install silently reused whatever version was already cached instead of
     # honouring GB_GPLASYNC_VERSION.
+    if [[ -f "$HOME/.local/share/vulkan/implicit_layer.d/renderdoc_capture.json" ]]; then
+        echo "Removing RenderDoc's Vulkan layer registration ..."
+        rm -f "$HOME/.local/share/vulkan/implicit_layer.d/renderdoc_capture.json"
+    fi
     for stale in "$HOME/.local/share/greenboost/nis" \
-                 "$HOME/.local/share/greenboost/dxvk-gplasync"; do
+                 "$HOME/.local/share/greenboost/dxvk-gplasync" \
+                 "$HOME/.local/share/greenboost/renderdoc"; do
         if [[ -d "$stale" ]]; then
             echo "Removing $stale ..."
             rm -rf "$stale"
@@ -327,6 +333,61 @@ if [[ "$MODE" == "install" && $GB_GPLASYNC_SKIP -eq 0 ]]; then
             "$HOME/.local/share/greenboost/dxvk-gplasync/current"
     else
         echo "Skipping dxvk-gplasync download , curl/tar not on PATH." >&2
+    fi
+fi
+
+# RenderDoc capture (real, human-driven GPU frame debugging , see
+# src-tauri/src/renderdoc.rs). Same idempotent-cache pattern as
+# dxvk-gplasync above: pinned version, skip if already cached, a "current"
+# symlink the Rust side reads. Registered as an opt-in Vulkan implicit
+# layer (inert unless a game launch explicitly sets
+# ENABLE_VULKAN_RENDERDOC_CAPTURE=1, which only happens when the Suite's
+# Capture button armed that specific launch) , never active on an ordinary
+# Launch, whether or not this ran.
+GB_RENDERDOC_VERSION="${GB_RENDERDOC_VERSION:-1.45}"
+GB_RENDERDOC_CACHE="$HOME/.local/share/greenboost/renderdoc/${GB_RENDERDOC_VERSION}"
+GB_RENDERDOC_SKIP=0
+for arg in "$@"; do
+    [[ "$arg" == "--no-renderdoc" ]] && GB_RENDERDOC_SKIP=1
+done
+
+if [[ "$MODE" == "install" && $GB_RENDERDOC_SKIP -eq 0 ]]; then
+    if command -v curl >/dev/null && command -v tar >/dev/null; then
+        if [[ ! -f "$GB_RENDERDOC_CACHE/bin/renderdoccmd" ]]; then
+            mkdir -p "$GB_RENDERDOC_CACHE"
+            url="https://renderdoc.org/stable/${GB_RENDERDOC_VERSION}/renderdoc_${GB_RENDERDOC_VERSION}.tar.gz"
+            echo "Fetching RenderDoc ${GB_RENDERDOC_VERSION} into ${GB_RENDERDOC_CACHE} ..."
+            if curl --fail --silent --show-error --location \
+                    --output "/tmp/renderdoc-${GB_RENDERDOC_VERSION}.tar.gz" "$url"; then
+                if tar -xzf "/tmp/renderdoc-${GB_RENDERDOC_VERSION}.tar.gz" \
+                       -C "$GB_RENDERDOC_CACHE" --strip-components=1; then
+                    echo "Installed RenderDoc at $GB_RENDERDOC_CACHE/"
+                else
+                    echo "WARNING: failed to extract RenderDoc archive , skipping." >&2
+                fi
+            else
+                echo "WARNING: could not download RenderDoc from $url" >&2
+                echo "         The Suite's Capture button will stay hidden; retry with:" >&2
+                echo "         GB_RENDERDOC_VERSION=$GB_RENDERDOC_VERSION $0" >&2
+            fi
+            rm -f "/tmp/renderdoc-${GB_RENDERDOC_VERSION}.tar.gz"
+        else
+            echo "RenderDoc ${GB_RENDERDOC_VERSION} already cached at $GB_RENDERDOC_CACHE"
+        fi
+        if [[ -f "$GB_RENDERDOC_CACHE/bin/renderdoccmd" ]]; then
+            ln -sfn "$GB_RENDERDOC_CACHE" "$HOME/.local/share/greenboost/renderdoc/current"
+            # --user: registers under ~/.local/share/vulkan/implicit_layer.d/,
+            # no root needed , this script already runs as the real user.
+            # The manifest's own "enable_environment" key is what keeps this
+            # inert until a specific launch opts in; registering it here
+            # does not turn capture on for anything.
+            "$GB_RENDERDOC_CACHE/bin/renderdoccmd" vulkanlayer --register --user \
+                >/dev/null 2>&1 \
+                && echo "Registered RenderDoc's Vulkan capture layer (opt-in, inert by default)" \
+                || echo "WARNING: could not register RenderDoc's Vulkan layer , Capture button will stay hidden." >&2
+        fi
+    else
+        echo "Skipping RenderDoc download , curl/tar not on PATH." >&2
     fi
 fi
 

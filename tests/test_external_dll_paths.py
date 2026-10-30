@@ -42,7 +42,8 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 WRAPPER = REPO / "greenboost_proton" / "gb_proton_main.py"
 
-_FUNCS = ("_external_dll_plan", "_apply_external_dll_overlay", "_revert_external_dll_overlay")
+_FUNCS = ("_external_dll_plan", "_apply_external_dll_overlay", "_revert_external_dll_overlay",
+          "_apply_per_game_json_env")
 
 
 @pytest.fixture(scope="module")
@@ -75,6 +76,11 @@ def apply_fn(dll_fns):
 @pytest.fixture()
 def revert_fn(dll_fns):
     return dll_fns[2]
+
+
+@pytest.fixture()
+def json_env_fn(dll_fns):
+    return dll_fns[3]
 
 
 @pytest.fixture()
@@ -292,3 +298,199 @@ def test_read_only_game_dir_degrades_to_a_warning(plan_fn, dll_dir, game_dir, ca
         os.chmod(str(game_dir), 0o755)
     assert plan == []
     assert "not writable" in capsys.readouterr().err
+
+
+# ── external_dll_targets: an Unreal-style layout where the DLLs load from
+# a plugin subdirectory, not next to the launcher exe (added 2026-08-28,
+# the FF7 Rebirth regression this map exists to fix , see
+# ARCHITECTURE.md) ───────────────────────────────────────────────────────
+
+def test_targets_map_honoured_one_pair_per_directory(plan_fn, dll_dir, tmp_path):
+    game_root = tmp_path / "game"
+    plugin_dir = game_root / "Engine" / "Plugins" / "StreamlineSubset" / "Win64"
+    plugin_dir.mkdir(parents=True)
+    launcher_dir = game_root
+    launcher_dir.mkdir(exist_ok=True)
+    (dll_dir / "sl.dlss.dll").write_bytes(b"x")
+    profile = {
+        "external_dlls_enabled": True,
+        "external_dll_dir": str(dll_dir),
+        "external_dll_targets": {"sl.dlss.dll": [str(plugin_dir)]},
+    }
+    plan = plan_fn(profile, str(launcher_dir), str(game_root))
+    assert plan == [(str(dll_dir / "sl.dlss.dll"), str(plugin_dir / "sl.dlss.dll"))]
+
+
+def test_targets_map_supports_multiple_directories_for_one_name(plan_fn, dll_dir, tmp_path):
+    game_root = tmp_path / "game"
+    dir_a = game_root / "a"; dir_a.mkdir(parents=True)
+    dir_b = game_root / "b"; dir_b.mkdir(parents=True)
+    (dll_dir / "nvngx_dlss.dll").write_bytes(b"x")
+    profile = {
+        "external_dlls_enabled": True,
+        "external_dll_dir": str(dll_dir),
+        "external_dll_targets": {"nvngx_dlss.dll": [str(dir_a), str(dir_b)]},
+    }
+    plan = plan_fn(profile, str(game_root), str(game_root))
+    dsts = sorted(dst for _, dst in plan)
+    assert dsts == sorted([str(dir_a / "nvngx_dlss.dll"), str(dir_b / "nvngx_dlss.dll")])
+
+
+def test_target_outside_game_root_is_rejected(plan_fn, dll_dir, tmp_path, capsys):
+    game_root = tmp_path / "game"
+    game_root.mkdir()
+    outside = tmp_path / "somewhere-else"
+    outside.mkdir()
+    (dll_dir / "sl.dlss.dll").write_bytes(b"x")
+    profile = {
+        "external_dlls_enabled": True,
+        "external_dll_dir": str(dll_dir),
+        "external_dll_targets": {"sl.dlss.dll": [str(outside)]},
+    }
+    plan = plan_fn(profile, str(game_root), str(game_root))
+    assert plan == []
+    assert "outside the game directory" in capsys.readouterr().err
+
+
+def test_name_with_no_target_entry_falls_back_to_game_dir(plan_fn, dll_dir, tmp_path):
+    game_root = tmp_path / "game"
+    game_root.mkdir()
+    (dll_dir / "sl.dlss.dll").write_bytes(b"x")
+    (dll_dir / "sl.reflex.dll").write_bytes(b"x")
+    profile = {
+        "external_dlls_enabled": True,
+        "external_dll_dir": str(dll_dir),
+        "external_dll_targets": {"sl.dlss.dll": [str(game_root)]},
+        # sl.reflex.dll has no entry , must still fall back to game_dir.
+    }
+    plan = plan_fn(profile, str(game_root), str(game_root))
+    dsts = {os.path.basename(dst) for _, dst in plan}
+    assert dsts == {"sl.dlss.dll", "sl.reflex.dll"}
+    assert all(os.path.dirname(dst) == str(game_root) for _, dst in plan)
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                     reason="root bypasses the write-permission check this test relies on")
+def test_unwritable_target_directory_is_skipped_not_fatal(plan_fn, dll_dir, tmp_path, capsys):
+    game_root = tmp_path / "game"
+    game_root.mkdir()
+    locked = game_root / "locked"
+    locked.mkdir()
+    (dll_dir / "sl.dlss.dll").write_bytes(b"x")
+    os.chmod(str(locked), 0o555)
+    try:
+        profile = {
+            "external_dlls_enabled": True,
+            "external_dll_dir": str(dll_dir),
+            "external_dll_targets": {"sl.dlss.dll": [str(locked)]},
+        }
+        plan = plan_fn(profile, str(game_root), str(game_root))
+    finally:
+        os.chmod(str(locked), 0o755)
+    assert plan == []
+    assert "not writable" in capsys.readouterr().err
+
+
+def test_game_root_defaults_to_game_dir_when_omitted(plan_fn, dll_dir, game_dir):
+    """Backward compatibility: callers that don't pass game_root (or pass
+    None) get exactly the pre-2026-08-28 single-directory behaviour."""
+    (dll_dir / "a.dll").write_bytes(b"x")
+    plan = plan_fn({"external_dlls_enabled": True, "external_dll_dir": str(dll_dir)}, str(game_dir))
+    assert plan == [(str(dll_dir / "a.dll"), str(game_dir / "a.dll"))]
+
+
+# ── external_dll_disabled: per-DLL opt-out (added 2026-08-28) ───────────────
+
+def test_disabled_name_is_skipped_entirely(plan_fn, dll_dir, game_dir):
+    (dll_dir / "sl.dlss.dll").write_bytes(b"x")
+    (dll_dir / "nvngx_dlssnr.dll").write_bytes(b"x")
+    profile = {
+        "external_dlls_enabled": True,
+        "external_dll_dir": str(dll_dir),
+        "external_dll_disabled": ["nvngx_dlssnr.dll"],
+    }
+    plan = plan_fn(profile, str(game_dir))
+    names = {os.path.basename(dst) for _, dst in plan}
+    assert names == {"sl.dlss.dll"}
+
+
+def test_disabled_list_is_case_insensitive(plan_fn, dll_dir, game_dir):
+    (dll_dir / "sl.dlss_nr.dll").write_bytes(b"x")
+    profile = {
+        "external_dlls_enabled": True,
+        "external_dll_dir": str(dll_dir),
+        "external_dll_disabled": ["SL.DLSS_NR.DLL"],
+    }
+    plan = plan_fn(profile, str(game_dir))
+    assert plan == []
+
+
+# ── Streamline-family fallback to sl.interposer.dll's directory (added
+# 2026-08-28, the FF7 Rebirth Neural Rendering placement bug this fixes:
+# nvngx_dlssnr.dll / sl.dlss_nr.dll landed at the Steam install root instead
+# of next to the plugin loader , see gb_proton_main.py's docstring) ────────
+
+def test_unmapped_streamline_name_falls_back_to_interposer_directory(plan_fn, dll_dir, tmp_path):
+    game_root = tmp_path / "game"
+    launcher_dir = game_root  # argv[2]'s dirname , the launcher-stub case
+    launcher_dir.mkdir(parents=True)
+    plugin_dir = game_root / "Engine" / "Plugins" / "StreamlineSubset" / "Win64"
+    plugin_dir.mkdir(parents=True)
+    (dll_dir / "nvngx_dlssnr.dll").write_bytes(b"x")
+    profile = {
+        "external_dlls_enabled": True,
+        "external_dll_dir": str(dll_dir),
+        # sl.interposer.dll's own directory IS known (the scanner found the
+        # game's real Streamline plugin folder); nvngx_dlssnr.dll has no
+        # entry of its own because the game never shipped that filename.
+        "external_dll_targets": {"sl.interposer.dll": [str(plugin_dir)]},
+    }
+    plan = plan_fn(profile, str(launcher_dir), str(game_root))
+    assert plan == [(str(dll_dir / "nvngx_dlssnr.dll"), str(plugin_dir / "nvngx_dlssnr.dll"))]
+
+
+def test_unmapped_non_streamline_name_ignores_interposer_fallback(plan_fn, dll_dir, tmp_path):
+    """A random .dll that isn't sl.*/nvngx_* has no reason to land next to
+    the interposer , it still falls back to game_dir like before."""
+    game_root = tmp_path / "game"
+    game_root.mkdir()
+    plugin_dir = game_root / "Engine" / "Plugins" / "StreamlineSubset" / "Win64"
+    plugin_dir.mkdir(parents=True)
+    (dll_dir / "d3dcompiler_47.dll").write_bytes(b"x")
+    profile = {
+        "external_dlls_enabled": True,
+        "external_dll_dir": str(dll_dir),
+        "external_dll_targets": {"sl.interposer.dll": [str(plugin_dir)]},
+    }
+    plan = plan_fn(profile, str(game_root), str(game_root))
+    assert plan == [(str(dll_dir / "d3dcompiler_47.dll"), str(game_root / "d3dcompiler_47.dll"))]
+
+
+def test_unmapped_streamline_name_falls_back_to_game_dir_when_interposer_unknown(plan_fn, dll_dir, game_dir):
+    """No sl.interposer.dll entry at all (a flat, non-Unreal game, or the
+    scanner never found the game's own interposer) , the old behaviour."""
+    (dll_dir / "sl.dlss_nr.dll").write_bytes(b"x")
+    profile = {
+        "external_dlls_enabled": True,
+        "external_dll_dir": str(dll_dir),
+    }
+    plan = plan_fn(profile, str(game_dir))
+    assert plan == [(str(dll_dir / "sl.dlss_nr.dll"), str(game_dir / "sl.dlss_nr.dll"))]
+
+
+# ── WINEDLLOVERRIDES append semantics (added 2026-08-28, needed for any
+# DLL proxy: setdefault-only would silently drop the value if Steam already
+# exported WINEDLLOVERRIDES) ─────────────────────────────────────────────────
+
+def test_winedlloverrides_appends_to_existing_value(json_env_fn, monkeypatch):
+    monkeypatch.setenv("WINEDLLOVERRIDES", "vulkan-1=n")
+    json_env_fn({"env": {"WINEDLLOVERRIDES": "mycustom=n,b"}})
+    assert os.environ["WINEDLLOVERRIDES"] == "vulkan-1=n;mycustom=n,b"
+
+
+def test_winedlloverrides_no_leading_semicolon_when_unset(json_env_fn, monkeypatch):
+    monkeypatch.delenv("WINEDLLOVERRIDES", raising=False)
+    json_env_fn({"env": {"WINEDLLOVERRIDES": "mycustom=n,b"}})
+    assert os.environ["WINEDLLOVERRIDES"] == "mycustom=n,b"
+
+

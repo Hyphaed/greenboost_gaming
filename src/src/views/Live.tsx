@@ -4,6 +4,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { Channel } from "@tauri-apps/api/core";
 import type { GpuMetrics, PoolBrief, GpuInfo, ViewType } from "../types";
 import { Icon } from "../icons";
+import { VULKAN_LAYER_VISIBLE } from "../featureFlags";
+
+// Hitches/PSO-compiles/present-count are the three stats the Vulkan layer
+// tracks that the OpenGL layer does not (see LayerStats/parseStatsLine
+// below) , hidden while VULKAN_LAYER_VISIBLE is false rather than shown
+// reading zero. Everything else in this view is real hardware telemetry or
+// shared between both layers. See featureFlags.ts for why the layer is
+// hidden and CHANGELOG.md, 2026-09-02.
 
 // ─── throttle significance ───────────────────────────────────────────────────
 // NVML reports the truth, but not all of it is a problem worth interrupting
@@ -1071,26 +1079,30 @@ export function LiveView({ onNavigate }: { onNavigate?: (v: ViewType) => void } 
             <StatRow label="1% Low FPS"  value={stats.p1_fps  > 0 ? stats.p1_fps.toFixed(1)  : ","} />
             <StatRow label="Worst frame" value={stats.worst_ms > 0 ? stats.worst_ms.toFixed(1) : ","} unit={stats.worst_ms > 0 ? "ms" : undefined}
               warn={stats.worst_ms > 50} />
-            <StatRow label="Hitches" value={stats.hitches} warn={stats.hitches > 0} />
+            {VULKAN_LAYER_VISIBLE && <StatRow label="Hitches" value={stats.hitches} warn={stats.hitches > 0} />}
             <StatRow label="T2 DDR used" value={stats.t2_mb.toFixed(0)} unit="MB" />
             <StatRow label="T3 NVMe used" value={stats.t3_mb.toFixed(0)} unit="MB"
               warn={stats.t3_mb > 0} />
             <StatRow label="OOM events" value={stats.oom} warn={stats.oom > 0} />
-            <StatRow label="PSO compiles" value={stats.pso_compiles}
-              warn={psoStalling} />
-            {psoStalling && (
-              <div style={{
-                marginTop: 4, padding: "5px 8px",
-                background: "rgba(251,191,36,0.1)",
-                border: "1px solid rgba(251,191,36,0.35)",
-                borderRadius: 4, fontSize: 11, color: "#fbbf24",
-                lineHeight: 1.5,
-              }}>
-                Shader compilation stutter , gplasync reduces this.
-                Enable <b>Background shader compiling</b> in All Games if not already on.
-              </div>
+            {VULKAN_LAYER_VISIBLE && (
+              <>
+                <StatRow label="PSO compiles" value={stats.pso_compiles}
+                  warn={psoStalling} />
+                {psoStalling && (
+                  <div style={{
+                    marginTop: 4, padding: "5px 8px",
+                    background: "rgba(251,191,36,0.1)",
+                    border: "1px solid rgba(251,191,36,0.35)",
+                    borderRadius: 4, fontSize: 11, color: "#fbbf24",
+                    lineHeight: 1.5,
+                  }}>
+                    Shader compilation stutter , gplasync reduces this.
+                    Enable <b>Background shader compiling</b> in All Games if not already on.
+                  </div>
+                )}
+                <StatRow label="Present count" value={stats.present_count} />
+              </>
             )}
-            <StatRow label="Present count" value={stats.present_count} />
           </div>
 
           {/* Memory tier visualization */}

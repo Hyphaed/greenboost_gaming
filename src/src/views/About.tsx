@@ -8,13 +8,21 @@ import type { InstallStreamProps } from "../types";
 
 const DISCLAIMER = "GreenBoost is an independent open-source project and is not affiliated with, endorsed by, or sponsored by NVIDIA Corporation. NVIDIA, CUDA, GeForce, and RTX are trademarks of NVIDIA Corporation.";
 
+// nvngx_dlssnr.dll / sl.dlss_nr.dll (DLSS 5 Neural Rendering) added
+// 2026-08-28. NVIDIA has not published an official release containing
+// these yet (they surfaced via a leaked early-access build), so "Sync" /
+// "Update" honestly fail on them until NVIDIA ships one , listed here so
+// their provenance is stated the same way as everything else, not implied
+// to be more available than it is.
 const DLL_META: Record<string, { label: string; type: string; repo: string }> = {
   "nvngx_dlss.dll":   { label: "nvngx_dlss.dll",   type: "DLSS Super Resolution",   repo: "NVIDIA/DLSS" },
   "nvngx_dlssg.dll":  { label: "nvngx_dlssg.dll",  type: "DLSS Frame Generation",   repo: "NVIDIA/DLSS" },
   "nvngx_dlssd.dll":  { label: "nvngx_dlssd.dll",  type: "DLSS Ray Reconstruction", repo: "NVIDIA/DLSS" },
+  "nvngx_dlssnr.dll": { label: "nvngx_dlssnr.dll", type: "DLSS Neural Rendering",   repo: "NVIDIA/DLSS (unreleased)" },
   "sl.dlss.dll":      { label: "sl.dlss.dll",      type: "Streamline DLSS SR",      repo: "NVIDIAGameWorks/Streamline" },
   "sl.dlss_g.dll":    { label: "sl.dlss_g.dll",    type: "Streamline DLSS FG",      repo: "NVIDIAGameWorks/Streamline" },
   "sl.dlss_d.dll":    { label: "sl.dlss_d.dll",    type: "Streamline DLSS RR",      repo: "NVIDIAGameWorks/Streamline" },
+  "sl.dlss_nr.dll":   { label: "sl.dlss_nr.dll",   type: "Streamline DLSS NR",      repo: "NVIDIAGameWorks/Streamline (unreleased)" },
   "sl.reflex.dll":    { label: "sl.reflex.dll",    type: "Streamline Reflex",       repo: "NVIDIAGameWorks/Streamline" },
   "sl.common.dll":    { label: "sl.common.dll",    type: "Streamline Core",         repo: "NVIDIAGameWorks/Streamline" },
   "sl.interposer.dll":{ label: "sl.interposer.dll",type: "Streamline Interposer",   repo: "NVIDIAGameWorks/Streamline" },
@@ -26,9 +34,11 @@ const DLL_ORDER = [
   "nvngx_dlss.dll",
   "nvngx_dlssg.dll",
   "nvngx_dlssd.dll",
+  "nvngx_dlssnr.dll",
   "sl.dlss.dll",
   "sl.dlss_g.dll",
   "sl.dlss_d.dll",
+  "sl.dlss_nr.dll",
   "sl.reflex.dll",
   "sl.common.dll",
   "sl.interposer.dll",

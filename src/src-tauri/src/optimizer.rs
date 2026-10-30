@@ -194,6 +194,15 @@ fn values_equal_for_domain(domain: Domain, current: &str, recommended_rendered: 
 fn is_plausible_settings_file(path: &Path) -> bool {
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
     if name.contains("manifest") { return false; }
+    // GreenBoostDLSS5.ini (and, for a game still on a pre-2026-09-02
+    // install, the legacy OptiScaler.ini it replaces , see
+    // gb_gaming/dlss5_runtime.py) is DLSS 5's own config file, not an
+    // in-game settings file. Confirmed live, 2026-09-02: "Optimize" wrote
+    // 28 game-graphics keys (texturequality, dlss_quality,
+    // framegeneration, ...) into its tail, landing inside its [DlssNr]
+    // section , the append-fallback below had no reason to think this
+    // file was off-limits the same way Manifest.ini is.
+    if name == "greenboostdlss5.ini" || name == "optiscaler.ini" { return false; }
     let path_lower = path.to_string_lossy().to_lowercase();
     !(path_lower.contains("/unrealengine/") && path_lower.contains("/saved/config/"))
 }
@@ -270,8 +279,9 @@ pub fn find_config_files(game_path: &Path) -> Vec<PathBuf> {
     // Proton game following this (extremely common) convention , every
     // setting silently showed "Not Set".
     if let Some(installdir) = game_path.file_name().and_then(|n| n.to_str()) {
-        let appid_map = crate::scanner::installdir_appid_map();
-        if let Some(appid) = appid_map.get(installdir) {
+        let appid_map = crate::scanner::installed_apps_map();
+        if let Some(app) = appid_map.get(installdir) {
+            let appid = &app.appid;
             // game_path = <library>/steamapps/common/<installdir> , the
             // library's steamapps/ dir is two levels up, same root
             // compatdata/ sits under.
@@ -970,6 +980,44 @@ mod tests {
         let manifest_content = fs::read_to_string(game_dir.join("sub").join("Manifest.ini")).unwrap();
         assert_eq!(manifest_content, "existing=1\n",
             "Manifest.ini was written to , it must never be an append target");
+
+        fs::remove_dir_all(&game_dir).ok();
+    }
+
+    /// Real incident, 2026-09-02: "Optimize" appended 28 game-graphics keys
+    /// (texturequality, dlss_quality, framegeneration, ...) into the tail of
+    /// a DLSS-5-enabled game's GreenBoostDLSS5.ini, landing inside its own
+    /// [DlssNr] section , confirmed by diffing the live file against its own
+    /// .gbak backup. Same class of bug as Manifest.ini above: this file must
+    /// never be an append target, even when it's the only .ini present.
+    #[test]
+    fn append_fallback_skips_dlss5_ini() {
+        let game_dir = temp_game_dir("dlss5_skip");
+        fs::write(game_dir.join("GreenBoostDLSS5.ini"),
+            "[DlssNr]\nEnabled=true\n").unwrap();
+
+        apply_optimization(&game_dir);
+
+        let content = fs::read_to_string(game_dir.join("GreenBoostDLSS5.ini")).unwrap();
+        assert_eq!(content, "[DlssNr]\nEnabled=true\n",
+            "GreenBoostDLSS5.ini was written to , it must never be an append target");
+
+        fs::remove_dir_all(&game_dir).ok();
+    }
+
+    /// A game migrated mid-session from the pre-2026-09-02 install still has
+    /// its legacy OptiScaler.ini sitting around , same rule applies to it.
+    #[test]
+    fn append_fallback_skips_legacy_optiscaler_ini() {
+        let game_dir = temp_game_dir("legacy_dlss5_skip");
+        fs::write(game_dir.join("OptiScaler.ini"),
+            "[DlssNr]\nEnabled=true\n").unwrap();
+
+        apply_optimization(&game_dir);
+
+        let content = fs::read_to_string(game_dir.join("OptiScaler.ini")).unwrap();
+        assert_eq!(content, "[DlssNr]\nEnabled=true\n",
+            "OptiScaler.ini was written to , it must never be an append target");
 
         fs::remove_dir_all(&game_dir).ok();
     }

@@ -39,6 +39,25 @@ __pycache__/
 /libraries/versions/
 /libraries/manifest.json
 
+# DLSS 5 (Neural Rendering) staging , NVIDIA-authored DLLs + a third-party
+# RenoDX add-on, neither of which this project may redistribute. The user
+# supplies these themselves; install.sh mirrors them to
+# ~/.local/share/greenboost/dlss5/ the same way it mirrors gb_gaming/. See
+# gb_gaming/dlss5.py and docs/dlss5-external-folders.md.
+/assets/dlss5/
+
+# GreenBoostDLSS5 (DLSS 5 Neural Rendering fork of OptiScaler_DLSSNR) , only
+# the built runtime the installer copies into a game ships here. The source
+# tree that builds it (MSVC-only, ~1.3 GB with its own .git) lives outside
+# this repo at ../dlssnr, one level up from greenboost_all/. This is the
+# repo's one deliberate binary exception: MIT-licensed, and it IS the
+# mechanism gb_gaming/optiscaler_installer.py installs , see FORK_NOTES.md.
+!/libraries/dlssnr/
+!/libraries/dlssnr/runtime/
+/libraries/dlssnr/runtime/**/*.pdb
+/libraries/dlssnr/runtime/**/*.exp
+/libraries/dlssnr/runtime/**/*.lib
+
 # uv / pip build artefacts
 /dist/
 /*.egg-info/

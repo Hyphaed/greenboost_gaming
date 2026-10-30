@@ -2886,6 +2886,126 @@ fn set_compat_tool_mapping(config_path: &Path, content: &str, appid: &str) -> Re
     Ok(true)
 }
 
+/// Reads back what Steam's `CompatToolMapping` currently has for `appid` ,
+/// the read-side counterpart to `set_compat_tool_mapping()` above. Added
+/// 2026-08-31: nothing in the codebase ever read this mapping back, so a
+/// game correctly running under GreenBoost Proton (confirmed live against
+/// "The First Berserker: Khazan" via its own wrapper log) had no way to
+/// show that in the UI , the mapping only ever got WRITTEN, silently, as a
+/// side effect of pressing Launch.
+///
+/// `None` covers both "nothing mapped" (Steam's own per-title default
+/// applies) and "couldn't read config.vdf at all" , both mean "nothing to
+/// show", not an error worth surfacing to the user the way a failed write
+/// is.
+pub fn read_compat_tool(appid: &str) -> Option<String> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let roots = [
+        format!("{home}/.local/share/Steam"),
+        format!("{home}/.steam/root"),
+        format!("{home}/.steam/steam"),
+        format!("{home}/.var/app/com.valvesoftware.Steam/data/Steam"),
+    ];
+    let config_path = roots.iter()
+        .map(|r| PathBuf::from(format!("{r}/config/config.vdf")))
+        .find(|p| p.exists())?;
+    let content = std::fs::read_to_string(&config_path).ok()?;
+    let (ctm_start, ctm_end) = find_brace_block(&content, "CompatToolMapping")?;
+    let ctm_block = &content[ctm_start..ctm_end];
+    let (sub_start, sub_end) = find_brace_block(ctm_block, appid)?;
+    let sub_block = &ctm_block[sub_start..sub_end];
+    let name_re = Regex::new(r#""name"\s*"([^"]*)""#).ok()?;
+    name_re.captures(sub_block)
+        .map(|c| c[1].to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Removes the `CompatToolMapping["<appid>"]` entry entirely, so Steam falls
+/// back to its own per-title default on the next launch. Symmetric to
+/// `set_compat_tool_mapping()`: same backup-then-atomic-rename, same
+/// single-block edit rather than a general VDF rewrite. `Ok(false)` when
+/// there was nothing mapped to begin with , no write, no backup, same
+/// convention as the setter's already-correct case.
+fn clear_compat_tool_mapping(config_path: &Path, content: &str, appid: &str) -> Result<bool, String> {
+    let (ctm_start, ctm_end) = find_brace_block(content, "CompatToolMapping")
+        .ok_or_else(|| "CompatToolMapping section not found in config.vdf".to_string())?;
+    let ctm_block = &content[ctm_start..ctm_end];
+
+    let Some((sub_start, sub_end)) = find_brace_block(ctm_block, appid) else {
+        return Ok(false);
+    };
+
+    // The block's `{ ... }` alone isn't the whole entry , the quoted appid
+    // key sits on its own line just above it. Locate that key's own line
+    // start (not just the `{`'s line, which can be indented separately)
+    // so removal doesn't leave a dangling `"<appid>"` with no block.
+    let key_needle = format!("\"{appid}\"");
+    let key_pos = ctm_block[..sub_start].rfind(&key_needle)
+        .ok_or_else(|| format!("could not locate appid {appid}'s key line in config.vdf"))?;
+    let line_start = ctm_block[..key_pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
+
+    // Swallow one trailing newline after the closing brace too, so the
+    // removal doesn't leave a blank line where the entry used to be.
+    let mut remove_end = sub_end;
+    if ctm_block[remove_end..].starts_with('\n') { remove_end += 1; }
+
+    let new_ctm_block = format!("{}{}", &ctm_block[..line_start], &ctm_block[remove_end..]);
+    let new_content = format!("{}{}{}", &content[..ctm_start], new_ctm_block, &content[ctm_end..]);
+
+    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs()).unwrap_or(0);
+    let backup_path = PathBuf::from(format!("{}.gb.{ts}", config_path.display()));
+    std::fs::copy(config_path, &backup_path).map_err(|e| format!("backup config.vdf: {e}"))?;
+
+    let tmp_path = PathBuf::from(format!("{}.gb_tmp", config_path.display()));
+    std::fs::write(&tmp_path, &new_content).map_err(|e| format!("write tmp: {e}"))?;
+    std::fs::rename(&tmp_path, config_path).map_err(|e| format!("rename into place: {e}"))?;
+    Ok(true)
+}
+
+/// Tauri-facing setter: `enable=true` reuses `ensure_greenboost_proton_mapping()`
+/// so the Steam-is-running warning it already produces is shown verbatim
+/// here too; `enable=false` clears the mapping via `clear_compat_tool_mapping()`
+/// above. Both return a status string rather than erroring on a soft
+/// condition (Steam running, GreenBoost Proton not installed) , same
+/// convention `ensure_greenboost_proton_mapping()` already uses.
+pub fn set_compat_tool_impl(appid: &str, enable: bool) -> Result<String, String> {
+    if enable {
+        return Ok(ensure_greenboost_proton_mapping(appid)
+            .unwrap_or_else(|| "GreenBoost Proton mapping set for this game.".to_string()));
+    }
+
+    let home = std::env::var("HOME").unwrap_or_default();
+    let roots = [
+        format!("{home}/.local/share/Steam"),
+        format!("{home}/.steam/root"),
+        format!("{home}/.steam/steam"),
+        format!("{home}/.var/app/com.valvesoftware.Steam/data/Steam"),
+    ];
+    let config_path = roots.iter()
+        .map(|r| PathBuf::from(format!("{r}/config/config.vdf")))
+        .find(|p| p.exists())
+        .ok_or_else(|| "Steam's config.vdf not found".to_string())?;
+    let content = std::fs::read_to_string(&config_path)
+        .map_err(|e| format!("couldn't read config.vdf: {e}"))?;
+
+    match clear_compat_tool_mapping(&config_path, &content, appid)? {
+        false => Ok("Nothing was mapped for this game.".to_string()),
+        true => {
+            let steam_running = Command::new("pgrep").args(["-x", "steam"]).output()
+                .map(|o| o.status.success()).unwrap_or(false);
+            Ok(if steam_running {
+                "Proton mapping cleared , Steam is currently running and holds \
+                 config.vdf in memory, so restart Steam for this to take effect \
+                 on THIS launch (it will take on the next one regardless)."
+                    .to_string()
+            } else {
+                "Proton mapping cleared for this game.".to_string()
+            })
+        }
+    }
+}
+
 /// Ensure Steam's `CompatToolMapping` maps `appid` to `greenboost-proton`
 /// before every launch. `launch_game_ext` used to just open
 /// `steam://rungameid/<id>` and its own success message admitted the gap:
@@ -4103,6 +4223,66 @@ mod compat_tool_mapping_tests {
             "no-op call must not create a backup file");
 
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn clear_removes_a_mapped_entry_and_key_line_cleanly() {
+        let path = temp_config_vdf("clear", SAMPLE);
+        let content = std::fs::read_to_string(&path).unwrap();
+        let changed = clear_compat_tool_mapping(&path, &content, "3768760").unwrap();
+        assert!(changed);
+
+        let new_content = std::fs::read_to_string(&path).unwrap();
+        assert!(!new_content.contains("3768760"), "key line must be gone, not just the block");
+        assert!(!new_content.contains("proton_11"));
+        // Overall brace balance must still hold , same corruption check as
+        // the setter's tests.
+        assert_eq!(new_content.matches('{').count(), new_content.matches('}').count());
+        // The surrounding CompatToolMapping/Steam/Valve/Software structure
+        // must still be intact , clearing the only entry shouldn't eat the
+        // section around it.
+        assert!(new_content.contains("\"CompatToolMapping\""));
+
+        let dir = path.parent().unwrap();
+        assert!(std::fs::read_dir(dir).unwrap()
+            .flatten().any(|e| e.file_name().to_string_lossy().contains("config.vdf.gb.")));
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn clear_on_an_unmapped_appid_is_a_noop_with_no_backup() {
+        let path = temp_config_vdf("clear_noop", SAMPLE);
+        let content = std::fs::read_to_string(&path).unwrap();
+        let changed = clear_compat_tool_mapping(&path, &content, "2680010").unwrap();
+        assert!(!changed);
+
+        let dir = path.parent().unwrap();
+        assert!(!std::fs::read_dir(dir).unwrap()
+            .flatten().any(|e| e.file_name().to_string_lossy().contains("config.vdf.gb.")),
+            "clearing something that was never mapped must not touch the file");
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn set_then_clear_round_trips_back_to_the_original_shape() {
+        let path = temp_config_vdf("roundtrip", SAMPLE);
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(set_compat_tool_mapping(&path, &content, "2680010").unwrap());
+
+        let after_set = std::fs::read_to_string(&path).unwrap();
+        assert!(clear_compat_tool_mapping(&path, &after_set, "2680010").unwrap());
+
+        let after_clear = std::fs::read_to_string(&path).unwrap();
+        assert!(!after_clear.contains("2680010"));
+        // The entry that was already there before either call must be
+        // completely unaffected by the round trip.
+        assert!(after_clear.contains("\"3768760\""));
+        assert!(after_clear.contains("\"proton_11\""));
+        assert_eq!(after_clear.matches('{').count(), after_clear.matches('}').count());
+
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 }
 

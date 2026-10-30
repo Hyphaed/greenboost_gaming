@@ -132,6 +132,10 @@ export function summarizeGame(
   const out: Change[] = [];
   for (const [key, next] of Object.entries(patch)) {
     const prev = before ? (before as any)[key] : undefined;
+    // external_dll_targets is derived from the scanner, not something the
+    // user directly sets , the external_dll_dir row above already reports
+    // the change that matters to them.
+    if (key === "external_dll_targets") continue;
     // wrappers is a nested object; report the one field Optimize touches
     // rather than dumping JSON at the reader.
     if (key === "wrappers") {

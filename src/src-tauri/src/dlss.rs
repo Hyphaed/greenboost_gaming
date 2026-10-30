@@ -10,18 +10,30 @@ use walkdir::WalkDir;
 // NVIDIA-only DLLs , explicitly excludes AMD (amd_fidelityfx_*) and Intel (libxess*).
 // All Streamline plugins must be listed so update_game_dlss treats the bundle
 // atomically via dlss_updater.install_streamline_bundle_into_game().
+//
+// nvngx_dlssnr.dll / sl.dlss_nr.dll (DLSS Neural Rendering) and the four
+// entries below them were added 2026-08-28 after finding them shipped in
+// "FINAL FANTASY VII REBIRTH" and in a leaked DLSS 5 Streamline 2.13 bundle
+// , see gb_gaming/dlss_updater.py KNOWN for why NR has no official fetch
+// source yet.
 const NVIDIA_DLLS: &[&str] = &[
     "nvngx_dlss.dll",
     "nvngx_dlssg.dll",
     "nvngx_dlssd.dll",
+    "nvngx_dlssnr.dll",
+    "nvngx_deepdvc.dll",
     "sl.common.dll",
     "sl.dlss.dll",
     "sl.dlss_d.dll",
     "sl.dlss_g.dll",
+    "sl.dlss_nr.dll",
     "sl.interposer.dll",
     "sl.nis.dll",
     "sl.pcl.dll",
     "sl.reflex.dll",
+    "sl.deepdvc.dll",
+    "sl.directsr.dll",
+    "sl.nvperf.dll",
 ];
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

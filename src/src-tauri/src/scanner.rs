@@ -28,6 +28,18 @@ pub struct Game {
     pub optimizations: Vec<GameSetting>,
     pub is_optimized: bool,
     pub has_backup: bool,
+    // Whether a Steam manifest with StateFlags bit 0x4 ("fully installed")
+    // backs this entry. false for a directory Steam's uninstaller left
+    // behind , real incident 2026-08-31: FF7 Rebirth and FF16 both kept
+    // showing as playable games after being uninstalled, because the old
+    // scan only checked "is this a directory under common/", never whether
+    // Steam still considers it installed. Heroic/Lutris/shortcut entries
+    // are always true , those scanners already check their own source
+    // (installed.json / prefix / shortcut target) for existence.
+    pub installed: bool,
+    // Size in bytes of a not-installed entry's leftover files, so the user
+    // can see what they'd reclaim by deleting it. None when installed.
+    pub leftover_bytes: Option<u64>,
 }
 
 // ── Hidden games ──────────────────────────────────────────────────────
@@ -43,6 +55,17 @@ pub struct Game {
 pub struct HiddenGame {
     pub path: String,
     pub name: String,
+    // Added 2026-08-31. Absent (None, via serde default) on every entry
+    // written before this field existed. Lets scan_games() tell "hidden
+    // because it was an orphaned leftover" (no appid at hide time , should
+    // be reconsidered once a manifest reappears) apart from "hidden because
+    // the user doesn't want to see an installed game" (has an appid , stays
+    // hidden regardless of manifest state). See the self-heal pass in
+    // scan_games() for why this matters: Khazan and FF16 were both hidden
+    // on 2026-08-22 while uninstalled leftovers, and stayed hidden forever
+    // after Khazan was reinstalled, because the old filter had no expiry.
+    #[serde(default)]
+    pub appid: Option<String>,
 }
 
 fn hidden_games_path() -> PathBuf {
@@ -65,10 +88,10 @@ fn save_hidden_games(list: &[HiddenGame]) -> Result<(), String> {
     std::fs::write(&path, json).map_err(|e| format!("write hidden_games.json: {e}"))
 }
 
-pub fn hide_game_impl(path: String, name: String) -> Result<(), String> {
+pub fn hide_game_impl(path: String, name: String, appid: Option<String>) -> Result<(), String> {
     let mut list = load_hidden_games();
     if !list.iter().any(|g| g.path == path) {
-        list.push(HiddenGame { path, name });
+        list.push(HiddenGame { path, name, appid });
         save_hidden_games(&list)?;
     }
     Ok(())
@@ -78,6 +101,22 @@ pub fn unhide_game_impl(path: String) -> Result<(), String> {
     let mut list = load_hidden_games();
     list.retain(|g| g.path != path);
     save_hidden_games(&list)
+}
+
+/// Whether a hidden entry should stay hidden, given whether Steam now
+/// considers its path fully installed. An entry hidden with no `appid`
+/// recorded was hidden while it was an uninstalled leftover (either it
+/// predates the `appid` field and is always `None`, or `hide_game_impl` saw
+/// no appid at hide time) , if a manifest now backs that path, the reason
+/// it was hidden no longer holds, so it should reappear. An entry hidden
+/// WITH an appid was a deliberate "I don't want to see this installed
+/// game" and stays hidden regardless of manifest state.
+///
+/// Real incident 2026-08-31: Khazan and FINAL FANTASY XVI were both hidden
+/// on 2026-08-22 while uninstalled leftovers. Khazan was later reinstalled
+/// but stayed invisible , the old filter had no expiry at all.
+fn should_stay_hidden(hidden: &HiddenGame, now_installed: bool) -> bool {
+    !(hidden.appid.is_none() && now_installed)
 }
 
 /// NVIDIA DLL filename -> display type, shared by every scanner (Steam,
@@ -94,14 +133,24 @@ fn nvidia_dll_target_map() -> HashMap<&'static str, &'static str> {
         ("nvngx_dlss.dll",    "DLSS Super Resolution"),
         ("nvngx_dlssg.dll",   "DLSS Frame Generation"),
         ("nvngx_dlssd.dll",   "DLSS Ray Reconstruction"),
+        // DLSS 5 Neural Rendering + the FF7 Rebirth-only extras below ,
+        // added 2026-08-28 so the scanner stops treating them as
+        // unrecognised files. See gb_gaming/dlss_updater.py KNOWN for why
+        // NR has no official fetch source yet.
+        ("nvngx_dlssnr.dll",  "DLSS Neural Rendering"),
+        ("nvngx_deepdvc.dll", "Deep DVC"),
         ("sl.common.dll",     "Streamline Core"),
         ("sl.dlss.dll",       "Streamline DLSS SR"),
         ("sl.dlss_g.dll",     "Streamline DLSS FG"),
         ("sl.dlss_d.dll",     "Streamline DLSS RR"),
+        ("sl.dlss_nr.dll",    "Streamline DLSS Neural Rendering"),
         ("sl.reflex.dll",     "Streamline Reflex"),
         ("sl.interposer.dll", "Streamline Interposer"),
         ("sl.nis.dll",        "Streamline NIS"),
         ("sl.pcl.dll",        "Streamline PCL"),
+        ("sl.deepdvc.dll",    "Streamline Deep DVC"),
+        ("sl.directsr.dll",   "Streamline DirectSR"),
+        ("sl.nvperf.dll",     "Streamline NvPerf"),
     ].iter().cloned().collect()
 }
 
@@ -321,6 +370,8 @@ pub fn scan_heroic_games() -> Vec<Game> {
                 optimizations: Vec::new(),
                 is_optimized: game_is_optimized(&game_dir),
                 has_backup: game_has_backup(&game_dir),
+                installed: true,
+                leftover_bytes: None,
             });
         }
     }
@@ -372,6 +423,8 @@ pub fn scan_heroic_games() -> Vec<Game> {
                             optimizations: Vec::new(),
                             is_optimized: game_is_optimized(&game_dir),
                             has_backup: game_has_backup(&game_dir),
+                            installed: true,
+                            leftover_bytes: None,
                         });
                     }
                 }
@@ -471,6 +524,8 @@ pub fn scan_lutris_games() -> Vec<Game> {
             optimizations: Vec::new(),
             is_optimized: game_is_optimized(&game_dir),
             has_backup: game_has_backup(&game_dir),
+            installed: true,
+            leftover_bytes: None,
         });
     }
 
@@ -500,8 +555,16 @@ pub fn steam_game_name_map() -> std::collections::HashMap<String, String> {
     map
 }
 
+pub struct InstalledApp {
+    pub appid: String,
+    // Steam's own StateFlags. Bit 0x4 ("fully installed") is the only bit
+    // this scanner cares about , see is_fully_installed().
+    pub state_flags: u32,
+}
+
 /// Returns a map from the on-disk install directory name (ACF's
-/// "installdir" field) to Steam AppID, across every Steam library.
+/// "installdir" field) to that app's AppID + StateFlags, across every Steam
+/// library.
 ///
 /// Keyed by installdir, NOT the ACF "name" field , found live 2026-08-07:
 /// "The First Berserker: Khazan" (name, has a colon) installs into a
@@ -512,10 +575,34 @@ pub fn steam_game_name_map() -> std::collections::HashMap<String, String> {
 /// the Launch button, GreenBoost overrides panel, and box art) for any
 /// game whose display name and installdir diverge, which is common
 /// whenever the title has punctuation Steam won't put in a path.
-pub fn installdir_appid_map() -> HashMap<String, String> {
-    let mut map = HashMap::new();
+///
+/// StateFlags was added 2026-08-31: this map used to carry only the appid,
+/// so a directory Steam's uninstaller left behind (no manifest at all, or
+/// a manifest with StateFlags never re-checked) was indistinguishable from
+/// a real install , scan_games() just saw "a directory exists".
+/// Pulls `installdir` + `appid` + `StateFlags` out of one appmanifest's raw
+/// text. Split out from `installed_apps_map()` so the parsing itself is
+/// testable without touching `$HOME` or the filesystem , everything else in
+/// that function is just "which files to read", not "what they mean".
+/// `installdir`/`appid` missing means a malformed or unrelated file, not a
+/// manifest worth indexing at all. `StateFlags` missing defaults to 0
+/// (not fully installed) rather than assuming installed , an absent field
+/// is not evidence a game is playable.
+fn parse_acf_manifest(content: &str) -> Option<(String, InstalledApp)> {
     let installdir_re = Regex::new(r#""installdir"\s+"([^"]+)""#).unwrap();
     let appid_re = Regex::new(r#""appid"\s+"([^"]+)""#).unwrap();
+    let state_re = Regex::new(r#""StateFlags"\s+"(\d+)""#).unwrap();
+
+    let installdir = installdir_re.captures(content)?[1].to_string();
+    let appid = appid_re.captures(content)?[1].to_string();
+    let state_flags = state_re.captures(content)
+        .and_then(|c| c[1].parse::<u32>().ok())
+        .unwrap_or(0);
+    Some((installdir, InstalledApp { appid, state_flags }))
+}
+
+pub fn installed_apps_map() -> HashMap<String, InstalledApp> {
+    let mut map = HashMap::new();
     for lib in get_steam_libraries() {
         let Ok(entries) = std::fs::read_dir(&lib) else { continue };
         for entry in entries.flatten() {
@@ -523,13 +610,22 @@ pub fn installdir_appid_map() -> HashMap<String, String> {
             let fname_str = fname.to_string_lossy();
             if fname_str.starts_with("appmanifest_") && fname_str.ends_with(".acf") {
                 let Ok(content) = std::fs::read_to_string(entry.path()) else { continue };
-                if let (Some(dir_cap), Some(id_cap)) = (installdir_re.captures(&content), appid_re.captures(&content)) {
-                    map.insert(dir_cap[1].to_string(), id_cap[1].to_string());
+                if let Some((installdir, app)) = parse_acf_manifest(&content) {
+                    map.insert(installdir, app);
                 }
             }
         }
     }
     map
+}
+
+/// Steam's "fully installed" bit. Anything else (updating, partially
+/// installed, update-required, uninstalling, …) is not something the Suite
+/// should offer to launch, and a directory with no manifest at all (the
+/// uninstall-leftover case) doesn't reach this check , it has no entry in
+/// the map to begin with.
+fn is_fully_installed(state_flags: u32) -> bool {
+    state_flags & 0x4 != 0
 }
 
 /// Scan games added to Steam as non-Steam shortcuts.
@@ -597,6 +693,8 @@ pub fn scan_shortcut_games() -> Vec<Game> {
             optimizations: Vec::new(),
             is_optimized: game_is_optimized(&launcher_dir),
             has_backup: game_has_backup(&launcher_dir),
+            installed: true,
+            leftover_bytes: None,
         });
 
         for (name, dir) in crate::nonsteam::battlenet_games(&sc.exe) {
@@ -611,6 +709,8 @@ pub fn scan_shortcut_games() -> Vec<Game> {
                 optimizations: Vec::new(),
                 is_optimized: game_is_optimized(&dir),
                 has_backup: game_has_backup(&dir),
+                installed: true,
+                leftover_bytes: None,
             });
         }
     }
@@ -623,7 +723,7 @@ pub fn scan_games() -> Vec<Game> {
     let mut games: HashMap<String, Game> = HashMap::new();
 
     let target_dlls: HashMap<&str, &str> = nvidia_dll_target_map();
-    let appid_map = installdir_appid_map();
+    let appid_map = installed_apps_map();
 
     for lib in libraries {
         let common = lib.join("common");
@@ -648,11 +748,18 @@ pub fn scan_games() -> Vec<Game> {
                 || name_lower.contains("redistributable");
             if is_non_game { continue; }
             let mut found_dlls = Vec::new();
+            let mut dir_bytes: u64 = 0;
 
-            // Scan for NVIDIA tech DLLs (limited depth for speed)
+            // Scan for NVIDIA tech DLLs (limited depth for speed). Also
+            // totals the directory's size on this same walk , reused as
+            // leftover_bytes below for a not-installed entry, rather than
+            // walking the tree a second time just to size it.
             for walk_entry in WalkDir::new(&game_dir).max_depth(10).into_iter().flatten() {
                 let f_path = walk_entry.path();
                 if !f_path.is_file() { continue; }
+                if let Ok(meta) = walk_entry.metadata() {
+                    dir_bytes += meta.len();
+                }
                 if let Some(f_name) = f_path.file_name().and_then(|n| n.to_str()) {
                     let f_low = f_name.to_lowercase();
                     if let Some(&tech) = target_dlls.get(f_low.as_str()) {
@@ -666,8 +773,19 @@ pub fn scan_games() -> Vec<Game> {
                 }
             }
 
-            let appid = appid_map.get(&game_name).cloned();
-            let image = appid.as_ref().and_then(|id| get_steam_image(id));
+            // Installed only when Steam's own manifest says so , see
+            // installed_apps_map()'s doc comment. A directory with no
+            // matching manifest, or one whose StateFlags no longer has the
+            // "fully installed" bit, is treated as an uninstall leftover:
+            // no Launch button, no box art, surfaced instead as reclaimable
+            // disk space. Real incident 2026-08-31: FF7 Rebirth (356 MB)
+            // and FF16 (64 MB) both kept appearing as playable games for
+            // this exact reason.
+            let app = appid_map.get(&game_name);
+            let installed = app.map(|a| is_fully_installed(a.state_flags)).unwrap_or(false);
+            let appid = app.map(|a| a.appid.clone());
+            let image = if installed { appid.as_ref().and_then(|id| get_steam_image(id)) } else { None };
+            let leftover_bytes = if installed { None } else { Some(dir_bytes) };
 
             let has_bak = game_has_backup(&game_dir);
             games.insert(game_dir.to_string_lossy().to_string(), Game {
@@ -679,21 +797,187 @@ pub fn scan_games() -> Vec<Game> {
                 optimizations: Vec::new(),
                 is_optimized: game_is_optimized(&game_dir),
                 has_backup: has_bak,
+                installed,
+                leftover_bytes,
             });
         }
     }
 
-    // Merge Heroic, Lutris and non-Steam shortcut games (deduplicate by path)
+    // Merge Heroic, Lutris and non-Steam shortcut games (deduplicate by
+    // path). Each of those scanners already checks its own source of truth
+    // for existence (installed.json's install_path, the Lutris prefix, the
+    // shortcut's exe), so unlike the Steam library walk above they are
+    // never leftovers , always installed.
     for g in scan_heroic_games().into_iter()
                                 .chain(scan_lutris_games())
                                 .chain(scan_shortcut_games()) {
         games.entry(g.path.clone()).or_insert(g);
     }
 
-    let hidden: HashSet<String> = load_hidden_games().into_iter().map(|g| g.path).collect();
+    // Self-heal the hidden list , see should_stay_hidden()'s doc comment.
+    let mut hidden_list = load_hidden_games();
+    let before = hidden_list.len();
+    hidden_list.retain(|h| {
+        let now_installed = games.get(&h.path).map(|g| g.installed).unwrap_or(false);
+        should_stay_hidden(h, now_installed)
+    });
+    if hidden_list.len() != before {
+        let _ = save_hidden_games(&hidden_list);
+    }
+
+    let hidden: HashSet<String> = hidden_list.into_iter().map(|g| g.path).collect();
     let mut result: Vec<Game> = games.into_values()
         .filter(|g| !hidden.contains(&g.path))
         .collect();
     result.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     result
+}
+
+/// Delete an uninstalled game's leftover files. Scoped tightly: only a
+/// direct child of a `common/` dir under a real Steam library, only when
+/// Steam no longer has a fully-installed manifest for it, and never one of
+/// the non-game names scan_games() itself skips , so this can only ever
+/// remove exactly what the "Not installed" section in the Games view is
+/// showing, never an arbitrary path a caller hands in.
+pub fn delete_leftover_files_impl(path: String) -> Result<u64, String> {
+    let target = PathBuf::from(&path);
+
+    let libraries = get_steam_libraries();
+    let common_parent = libraries.iter()
+        .find_map(|lib| {
+            let common = lib.join("common");
+            let parent = target.parent()?;
+            if std::fs::canonicalize(parent).ok() == std::fs::canonicalize(&common).ok() {
+                Some(common)
+            } else { None }
+        });
+    let Some(_common) = common_parent else {
+        return Err("not a direct child of a known Steam library's common/ dir".to_string());
+    };
+
+    let Some(game_name) = target.file_name().and_then(|n| n.to_str()) else {
+        return Err("path has no file name".to_string());
+    };
+    let name_lower = game_name.to_lowercase();
+    let is_non_game = name_lower.starts_with("proton")
+        || name_lower.starts_with("steamlinuxruntime")
+        || name_lower.contains("steam controller")
+        || name_lower.contains("steamworks shared")
+        || name_lower.contains("easyanticheat runtime")
+        || name_lower.contains("hotfix")
+        || name_lower == "steam.dll"
+        || name_lower.contains("redistributable");
+    if is_non_game {
+        return Err("refusing to delete Steam infrastructure".to_string());
+    }
+
+    let app = installed_apps_map();
+    if let Some(a) = app.get(game_name) {
+        if is_fully_installed(a.state_flags) {
+            return Err(format!("{game_name} is still installed , uninstall it from Steam first"));
+        }
+    }
+
+    if !target.is_dir() {
+        return Err("directory does not exist".to_string());
+    }
+
+    let freed: u64 = WalkDir::new(&target).into_iter().flatten()
+        .filter_map(|e| e.metadata().ok())
+        .filter(|m| m.is_file())
+        .map(|m| m.len())
+        .sum();
+
+    std::fs::remove_dir_all(&target).map_err(|e| format!("delete failed: {e}"))?;
+    Ok(freed)
+}
+
+#[cfg(test)]
+mod installed_state_tests {
+    use super::*;
+
+    // Trimmed but structurally real snippet , the fields scan_games() cares
+    // about, matching what's actually on disk in
+    // ~/.local/share/Steam/steamapps/appmanifest_2680010.acf.
+    const KHAZAN_INSTALLED: &str = "\"AppState\"\n{\n\t\"appid\"\t\t\"2680010\"\n\t\"name\"\t\t\"The First Berserker: Khazan\"\n\t\"StateFlags\"\t\t\"4\"\n\t\"installdir\"\t\t\"The First Berserker Khazan\"\n}\n";
+
+    #[test]
+    fn state_flags_4_is_fully_installed() {
+        let (installdir, app) = parse_acf_manifest(KHAZAN_INSTALLED).unwrap();
+        assert_eq!(installdir, "The First Berserker Khazan");
+        assert_eq!(app.appid, "2680010");
+        assert!(is_fully_installed(app.state_flags));
+    }
+
+    // 1026 = 0x402 , update-required (0x400) + uninstalling (0x2), neither
+    // of which is the fully-installed bit (0x4). A game mid-update or
+    // mid-uninstall should not show a Launch button.
+    #[test]
+    fn other_state_flags_are_not_fully_installed() {
+        let content = KHAZAN_INSTALLED.replace("\"4\"", "\"1026\"");
+        let (_, app) = parse_acf_manifest(&content).unwrap();
+        assert!(!is_fully_installed(app.state_flags));
+    }
+
+    #[test]
+    fn a_manifest_missing_state_flags_defaults_to_not_installed() {
+        let content = KHAZAN_INSTALLED
+            .lines()
+            .filter(|l| !l.contains("StateFlags"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (_, app) = parse_acf_manifest(&content).unwrap();
+        assert_eq!(app.state_flags, 0);
+        assert!(!is_fully_installed(app.state_flags));
+    }
+
+    // Real incident 2026-08-31: FF7 Rebirth's manifest was gone entirely
+    // (Steam's uninstaller removed it), but 356 MB of files were left under
+    // steamapps/common/. A directory with no manifest match must never be
+    // treated as installed , parse_acf_manifest() never even runs for a
+    // directory that has no matching .acf, so installed_apps_map() simply
+    // has no entry for it, and scan_games()'s `app.map(...).unwrap_or(false)`
+    // resolves that absence to `installed: false`.
+    #[test]
+    fn malformed_or_unrelated_content_yields_no_manifest() {
+        assert!(parse_acf_manifest("not a vdf file at all").is_none());
+        assert!(parse_acf_manifest("\"appid\"\t\t\"123\"\n").is_none(), "missing installdir");
+    }
+
+    #[test]
+    fn hidden_with_no_appid_is_reinstated_once_installed_again() {
+        let entry = HiddenGame {
+            path: "/games/Khazan".to_string(),
+            name: "Khazan".to_string(),
+            appid: None,
+        };
+        // Real incident: hidden while an orphaned leftover, later
+        // reinstalled , must come back.
+        assert!(!should_stay_hidden(&entry, true));
+        // Still not installed , nothing has changed, stays hidden (this is
+        // just the ordinary "removed from list" state, not a bug).
+        assert!(should_stay_hidden(&entry, false));
+    }
+
+    #[test]
+    fn hidden_with_an_appid_stays_hidden_regardless_of_install_state() {
+        let entry = HiddenGame {
+            path: "/games/Hearthstone".to_string(),
+            name: "Hearthstone".to_string(),
+            appid: Some("3274469611".to_string()),
+        };
+        assert!(should_stay_hidden(&entry, true));
+        assert!(should_stay_hidden(&entry, false));
+    }
+
+    #[test]
+    fn legacy_entries_with_no_appid_field_deserialize_as_none() {
+        // Every hidden_games.json entry written before this field existed
+        // has no "appid" key at all , confirms #[serde(default)] does the
+        // right thing rather than failing to parse the whole file.
+        let json = r#"[{"path":"/games/FF16","name":"FINAL FANTASY XVI"}]"#;
+        let list: Vec<HiddenGame> = serde_json::from_str(json).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].appid, None);
+    }
 }

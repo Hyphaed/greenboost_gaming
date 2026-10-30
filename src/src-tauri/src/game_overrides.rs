@@ -81,6 +81,43 @@ pub struct GameOverrides {
     /// Directory the overlay above reads from; "" = unset.
     #[serde(default)]
     pub external_dll_dir: String,
+    /// Maps a lowercased DLL filename to the absolute directory (or
+    /// directories) that already contain a DLL of that name , computed
+    /// from the scanner's own `Game.dlls[].path` findings when the user
+    /// picks a folder in the UI. Lets the overlay (and the "copy into
+    /// game" action) target the directory a game actually loads a DLL
+    /// from, not just the exe directory; a name with no entry here still
+    /// falls back to the exe directory in the Proton wrapper. See
+    /// `_external_dll_plan()` in greenboost_proton/gb_proton_main.py.
+    #[serde(default)]
+    pub external_dll_targets: HashMap<String, Vec<String>>,
+    /// Lowercased filenames excluded from the overlay/copy-in even though
+    /// they're present in `external_dll_dir , lets a user opt a specific
+    /// file out (an experimental Neural Rendering / Deep DVC / DirectSR
+    /// DLL they don't want linked in) without removing it from the shared
+    /// folder. Empty = every *.dll in the folder is used, the original
+    /// behaviour. See `_external_dll_plan()` in
+    /// greenboost_proton/gb_proton_main.py and
+    /// `install_external_folder_into_game()` in gb_gaming/dlss_updater.py.
+    #[serde(default)]
+    pub external_dll_disabled: Vec<String>,
+    /// One-switch DLSS 5 (Neural Rendering), rewritten 2026-09-02 around
+    /// GreenBoost's own DLSS Neural Rendering runtime , see gb_gaming/dlss5.py,
+    /// gb_gaming/dlss5_runtime.py and docs/dlss5-external-folders.md for the
+    /// mechanism and why an earlier one (patching a leaked, Control-specific
+    /// RenoDX add-on's process-name check) was replaced rather than
+    /// extended, and why ReShade support was dropped entirely , the runtime
+    /// needs neither ReShade nor a Streamline DLL swap. Independent of
+    /// external_dlls_enabled.
+    #[serde(default)]
+    pub dlss5_enabled: bool,
+    /// The DLL name the DLSS5 runtime was installed as for this game (e.g.
+    /// "winmm.dll"), set by the Suite after a successful dlss5_enable call.
+    /// The Proton wrapper appends `<stem>=n,b` to WINEDLLOVERRIDES for this
+    /// value when dlss5_enabled is true , see
+    /// greenboost_proton/gb_proton_main.py. "" = not installed yet.
+    #[serde(default)]
+    pub dlss5_proxy_dll: String,
 }
 
 fn per_game_path(appid: &str) -> PathBuf {

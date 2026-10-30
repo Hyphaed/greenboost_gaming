@@ -1,27 +1,20 @@
 # GreenBoost Gaming Suite
 
-**Status: Beta** , it works on my machine, and that's about as
-far as the evidence goes.
+**Status: Beta** , it works on my machine, and that's about as far as the evidence goes.
 **Author:** Ferran Duarri · **License:** GPL v2 (see `LICENSE`)
 
 ---
 
 ## What this actually is
 
-This is a **side project born from [GreenBoost](https://gitlab.com/IsolatedOctopi/greenboost)**.
+A Linux app for NVIDIA gamers: per-game settings, DLSS version management,
+fan curves, power and clock control, multi-monitor setup, and experimental
+DLSS 5 Neural Rendering injection, all in one window , the things NVIDIA's
+own app has never shipped for Linux.
 
-GreenBoost is the real project. It's a Linux kernel module plus a CUDA shim
-that pools your GPU's VRAM together with system DDR RAM (and NVMe, and even
-memory on other machines) into one big tier'd pool, 
-apart from offering turboquant, weight quantization, dataflux...
-
-I'm not a gamer.
-
-I don't have a backlog of AAA titles to test against. 
-All of this is built and tested on exactly one machine: an RTX 5070 on GNOME/Wayland.
-
-It works there. Beyond there, I genuinely don't know , which is where you come
-in (see [Contributing](#contributing), I mean it).
+It's a side project of [GreenBoost](https://gitlab.com/IsolatedOctopi/greenboost),
+a separate GPU-memory-pooling tool built for AI workloads. Built and tested on two machines 
+(laptop/destktop RTX 5070, GNOME/Wayland) , other setups are untested, and [Contributing](#contributing) explains how to help change that.
 
 ---
 
@@ -44,8 +37,7 @@ something Linux + NVIDIA doesn't give you on its own (no NVIDIA App / GeForce
 Experience equivalent exists on Linux for most of these). Each row's (i) says
 what it actually does, why the gap exists on Linux specifically, and a real
 command to verify it yourself , no invented numbers. Search by symptom too
-("stutter", "VRAM", "overlay"). All 31 are written up in
-[docs/FEATURES.md](docs/FEATURES.md):
+("stutter", "VRAM", "overlay"). All features are explained further on [docs/FEATURES.md](docs/FEATURES.md):
 
 ![All Games tab showing settings grouped by goal, each tagged with a GreenBoost badge and a plain-language benefit line](docs/screenshots/games-all-settings.png)
 
@@ -83,8 +75,10 @@ it later:
 ![Saved profiles tab with a named profile and load/activate controls](docs/screenshots/profile-profiles.png)
 
 **Live** , real-time telemetry with no game required: GPU clock and power
-sparklines, frame-time stats from the Vulkan layer, memory-tier fill, and a
-shared timeline of GreenBoost core activity happening on the same GPU:
+sparklines, memory-tier fill, and a shared timeline of GreenBoost core
+activity happening on the same GPU. Frame-time stats come from the Vulkan
+layer specifically, which is off by default (see below) , those rows only
+appear once you've turned it on for a game:
 
 ![Live Stats telemetry with GPU clock and power sparklines, memory tiers and a GreenBoost activity log](docs/screenshots/live-stats.png)
 
@@ -98,81 +92,50 @@ glance:
 
 ## So what does it actually do?
 
-Easiest way to answer that is the way I'd answer it across a table, with
-a coffee, if you'd just asked me what I've been working on.
+**31 things Linux + NVIDIA doesn't give you today, in one window:**
 
-**"It gives games more VRAM."** That's the bit that came from the AI
-project, and it's the one I have to be careful about, because it's the
-claim everyone wants to be true.
+- **Old DLSS files, fixed.** Games ship whatever DLSS version they launched
+  with, sometimes years out of date. This pulls the current ones straight
+  from NVIDIA's own repos, keeps every version it's ever fetched, and lets
+  you pick per game , roll one title back in two clicks if a new release
+  looks worse.
+- **Fan curves that don't hunt.** Drag a curve, watch the current
+  temperature track it. A 3 °C hysteresis stops it oscillating every few
+  seconds.
+- **Power and clocks, in one place**, instead of the terminal.
+- **Monitors, natively on Wayland** , arrangement, refresh rate, scaling,
+  VRR, no silent fallback to X11.
+- **~299 per-game profiles already written**, so most games need no setup
+  at all.
+- **A live view while you play** , temperature, clocks, power, VRAM , that
+  warns about a thermal or power throttle *before* you feel it in the
+  framerate.
+- **A status page to properly log the gaming session** it gives you info about whether everything's
+  actually running, instead of leaving you to guess.
 
-Here's the real shape of it. Your card has 8, 12, 16 GB, and a modern
-game eats all of it and then starts stuttering or quietly loading uglier
-textures. GreenBoost's memory pool tiers allocations across real VRAM
-(T1), system DDR (T2), NVMe (T3), and RAM on another machine on your LAN
-after that. That pool is real, it runs, and you can watch it fill from
-the Status view.
+All features are listed with what they do, why the gap exists on Linux specifically,
+and a way to check each one yourself: **[docs/FEATURES.md](docs/FEATURES.md)**.
+Inside the app, every one carries a green `GreenBoost` badge, and **Games →
+All Games → GreenBoost extras only** filters the list down to exactly them.
 
-What it is **not**, today, is a thing that makes an arbitrary game's own
-Vulkan or DirectX allocations spill into system RAM. The tiering is real
-and active for GreenBoost's own CUDA work , the AI inference this project
-was built for , sharing the card with your game. Extending it to
-allocations the game itself makes through the NVIDIA driver is an
-unsolved problem, and not one I've solved. NVIDIA's Linux Vulkan driver
-has no automatic VRAM oversubscription at all: the Windows driver does
-it, AMD's Linux driver does something like it, and the NVIDIA Linux
-driver just fails the allocation. That gap is industry-wide, and this app
-does not currently close it.
+None of this needs the GreenBoost kernel module , it all works with
+GreenBoost core doing nothing at all.
 
-So the honest version: if you run a local model alongside your game, this
-is the project that lets both of them fit. If you only game, treat this
-section as an interesting problem I'm still standing in front of, and use
-the rest of the list , which is what I actually open it for.
+**What about "more VRAM"?** That's a separate, much earlier-stage piece: an
+experimental Vulkan layer that can pool your GPU's VRAM with system RAM,
+**off by default because it's alpha**. It's real and working for GreenBoost's
+own AI workloads sharing the card with a game , it does not make an
+arbitrary game's own graphics allocations spill into system RAM (no Linux
+NVIDIA driver does that today, on its own). If you don't run AI work
+alongside your games, the features above are what you're actually here
+for , this part is optional and you can ignore it entirely.
 
-**"And what if my games run fine already?"** Then you ignore that part
-and use the rest, which honestly is what I open it for most days.
-
-There are **31 of those** , 31 things this gives you that a stock Linux +
-NVIDIA install doesn't, most of which NVIDIA has never shipped for Linux at
-all. Every one is listed, explained, and paired with a way to check it
-yourself in **[docs/FEATURES.md](docs/FEATURES.md)**. The same 31 are marked
-with a green `GreenBoost` badge inside the app, and **Games → All Games →
-GreenBoost extras only** filters the settings list down to exactly them.
-
-The highlights:
-
-- **Your DLSS DLLs are old and nobody tells you.** Games ship whatever
-  DLSS version they shipped with, sometimes years out of date. This pulls
-  the current ones from NVIDIA's own repos, keeps every version it has
-  ever downloaded, and lets you say "this game uses that one". New
-  release makes a game shimmer? Roll that one game back. Two clicks.
-- **Fans that stop doing the annoying thing.** You drag a curve with the
-  mouse and watch your current temperature slide along it. It won't
-  oscillate up and down every four seconds, because it waits for a 3 °C
-  drop before easing off.
-- **Power and clocks in one place**, so you can run the card quieter for
-  an evening without going hunting through the terminal.
-- **Monitors.** Arrangement, resolution, refresh rate, scaling, VRR. On
-  Wayland, natively , not by quietly falling back to X11 behind your back.
-- **Per-game settings that stick**, including about 299 profiles already
-  written for titles people play, so a lot of the time there's nothing
-  for you to configure.
-- **A live view while you play** , temperature, clocks, power, VRAM ,
-  that warns you the card has started backing off its clocks *before* you
-  feel it in the framerate.
-- **A status page that just tells you** whether all of this is actually
-  running, instead of leaving you to wonder whether it does anything.
-
-**"So who's it for?"** Squarely: people who already run GreenBoost for AI
-work and want to game on the same machine without closing everything
-first, and people running an encoder or a language model alongside the
-game where VRAM disappears fast. Then, going by the list above, anyone on
-NVIDIA + Linux who just wants their fan curve, DLSS versions, per-game
-settings and monitors handled in one window instead of five terminals ,
-which, given NVIDIA has never shipped its control panel for Linux, is
-most of us.
-
-None of that second list needs the kernel module. It works with GreenBoost
-core doing nothing at all.
+**Who's it for?** Anyone on NVIDIA + Linux who wants their fan curve, DLSS
+versions, per-game settings and monitors in one window instead of five
+terminals , which, since NVIDIA has never shipped its own control panel for
+Linux, is most of us. It's also, specifically, for people who already run
+GreenBoost for AI work and want to game on the same machine without closing
+everything first.
 
 ---
 
@@ -180,7 +143,8 @@ core doing nothing at all.
 
 | Component | What it does |
 |---|---|
-| **Vulkan implicit layer** (`greenboost_vulkan_layer.c`) | Inflates each game's reported `VkPhysicalDeviceMemoryProperties` to include T2 DDR, routes overflow allocations through DMA-BUF imports. Also does NIS sharpen/upscale (embedded SPIR-V) and NVIDIA Reflex via `VK_NV_low_latency2` |
+| **Vulkan implicit layer** (`greenboost_vulkan_layer.c`) | Inflates each game's reported `VkPhysicalDeviceMemoryProperties` to include T2 DDR, routes overflow allocations through DMA-BUF imports. Also does NIS sharpen/upscale (embedded SPIR-V) and NVIDIA Reflex via `VK_NV_low_latency2`. **Off by default for every game** , it's alpha-stage; turn it on per game with `GREENBOOST_VULKAN_DISABLE=0` in that game's launch options |
+| **Controller panel** (Status view) | Lists every connected gamepad , driver, Bluetooth/USB, battery , and flags when Steam can't read its raw device file (a driver/Steam udev conflict, not a GreenBoost setting) instead of leaving you to guess why in-game remapping doesn't work |
 | **OpenGL layer** (`greenboost_gl_layer.c`) | The same memory-tiering idea for OpenGL titles. Younger and less exercised than the Vulkan one |
 | **Desktop app** | Six views: Status, Games, Displays, Profile, Live, About |
 | **GreenBoost Proton** | A Proton version that shows up in Steam's compatibility list next to Proton 10.0 and Experimental, and that you pick per game the same way. It doesn't replace Proton , it sits in front of the one you already have: prepares the machine for that specific title, then hands the launch to upstream Proton (stable or Experimental, selected by a `channel` file) and gets out of the way. Before the hand-off it sets CPU affinity from your real topology, applies the per-game JSON profile's env / DXR / VKD3D settings, activates the GPU power-clock profile and matching fan curve, overlays dxvk-gplasync, stages the NIS shaders, tunes swappiness and the compositor for the session, and writes a telemetry line on exit. If any of that fails it falls back to a plain upstream Proton launch instead of taking the game down with it |
@@ -210,6 +174,60 @@ What the views do:
   NVML rather than guessing from a temperature reading, and fires *before* your
   framerate tanks rather than after.
 - **About** , DLL provenance table, preferences, license, disclaimer.
+
+---
+
+## DLSS 5 (Neural Rendering) , experimental, and here's exactly what it needs
+
+This is unofficial. NVIDIA has never shipped a public API for it, nothing
+here is documented by NVIDIA, and it only runs on RTX 50-series cards. Say
+that up front because the toggle is easy to find and the requirements are
+easy to skip past.
+
+Under the hood this installs **GreenBoost's own DLSS 5 runtime**
+(`libraries/dlssnr/`, an NVIDIA-only fork with every AMD/Intel code path
+removed , ~3 MB instead of the ~200 MB a vendor-agnostic upscaler proxy
+would pull in) into the game's own executable directory as a DLL proxy, and
+turns its Neural Rendering pass on directly in the runtime's own config file.
+Nothing is fetched from the network at install time , the runtime is built
+and shipped with the Suite, the same rule the DLSS DLL updater already
+follows for redistribution: only NVIDIA's own signed DLLs ever get pulled
+live, and only from NVIDIA's own repos.
+
+What you need before the toggle in **Games → This Game → DLSS 5** does
+anything:
+
+1. **An RTX 50-series GPU.** The model does not run on anything older.
+2. **`nvngx_dlssnr.dll`**, NVIDIA's own model weights. This repo cannot
+   supply or redistribute it , place your own copy at
+   `~/.local/share/greenboost/dlss5/nvngx_dlssnr.dll` (or `assets/dlss5/`
+   in a dev checkout). The "files needed" dialog shown before you enable the
+   feature tells you plainly if it's missing.
+3. **A game that already has DLSS.** Neural Rendering runs as an extra pass
+   on top of an already-active DLSS Super Resolution feature , it does
+   nothing if DLSS itself isn't turned on in the game's own graphics menu.
+
+With those three in place, one toggle does the rest: installs the runtime,
+picks a DLL proxy name the game isn't already using (`winmm.dll` first,
+falling back through `version.dll`, `dbghelp.dll`, `wininet.dll`,
+`winhttp.dll`, `dxgi.dll`, `d3d12.dll`), and turns the pass on in its config.
+The panel expanded past the one on/off toggle too , preset, style,
+intensity, local structure/tone, skin structure, and the rest of the
+runtime's real parameters are all there, alongside Frame Generation and the
+Reflex-aware framerate limit, so there's no separate overlay to hunt for.
+The preflight checklist in that same panel reports the real, measured state
+(GPU model, driver, staged files, which proxy slot is free) every time you
+open it.
+
+**Confirmed working on 007 First Light only.** The mechanism is meant for
+every game , it doesn't touch any game-specific shader code, unlike an
+earlier RenoDX-based attempt that only ever worked for the one game it was
+built against , but nothing beyond 007 First Light has actually been tested
+yet. Whether the pass changes the picture in any given game also hasn't been
+measured with a real A/B comparison. What's confirmed: the runtime installs
+cleanly and the game's own native DLSS Super Resolution keeps evaluating
+every frame underneath it, unaffected. See `CHANGELOG.md` for the fuller
+story.
 
 ---
 
@@ -375,9 +393,11 @@ The Status view answers this for you, and I'd start there. If you want to
 confirm it yourself:
 
 ```bash
-# The Vulkan layer is registered and loads
+# The Vulkan layer is registered , this only confirms it CAN load, not that
+# it's active for any given game. It defaults off (see above); the wrapper
+# sets GREENBOOST_VULKAN_DISABLE=0 explicitly for a game that enables it.
 ls /usr/share/vulkan/implicit_layer.d/VkLayer_greenboost.json
-GREENBOOST_VULKAN=1 GREENBOOST_VK_DEBUG=1 vkcube &
+GREENBOOST_VULKAN=1 GREENBOOST_VULKAN_DISABLE=0 GREENBOOST_VK_DEBUG=1 vkcube &
 journalctl --user --since "5 seconds ago" | grep -i greenboost
 
 # The kernel module is loaded (needed only for the memory tiers)
@@ -459,6 +479,13 @@ Logic was ported or adapted from those other projects;
   the same physical device.
 - **[DLSS-Updater](https://github.com/Recol/DLSS-Updater)** , DLL
   version scanning + patching pattern adapted for the DLSS panel.
+- **[OptiScaler](https://github.com/optiscaler/OptiScaler)** and its
+  **[Dagherbou/OptiScaler_DLSSNR](https://github.com/Dagherbou/OptiScaler_DLSSNR)**
+  fork , studying how OptiScaler hooks a game's DXGI/D3D12/NGX calls is what
+  made DLSS 5 (Neural Rendering) injection possible here at all. GreenBoost's
+  own DLSS 5 runtime (`libraries/dlssnr/`) is a further NVIDIA-only fork of
+  that DLSSNR fork, built specifically for this project , see `CHANGELOG.md`
+  and `libraries/dlssnr/FORK_NOTES.md` for the full history.
 - **[GreenWithEnvy](https://gitlab.com/leinardi/gwe)** (GPL v3) ,
   reference for the GPU profile editor (clocks, fan curve, power limit). 
   (actually I have permission for being the successor / official mantainer of GreenWithEnvy)

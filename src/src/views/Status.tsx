@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { SystemStatus, GpuInfo, GpuMetrics, InstallStreamProps, NvidiaUpdateStatus, PoolBrief } from "../types";
+import type { SystemStatus, GpuInfo, GpuMetrics, InstallStreamProps, NvidiaUpdateStatus, PoolBrief, ControllerInfo } from "../types";
 import { Icon } from "../icons";
 import { InstallStreamModal } from "../components/InstallStreamModal";
 import { UpdateBanner } from "../components/UpdateBanner";
@@ -62,6 +62,7 @@ export function StatusView() {
   const [poolBrief, setPoolBrief] = useState<PoolBrief | null>(null);
   const [activeProfile, setActiveProfile] = useState<string | null>(null);
   const [sessionHistory, setSessionHistory] = useState<SessionRecord[]>([]);
+  const [controllers, setControllers] = useState<ControllerInfo[]>([]);
 
   const refreshStatus = useCallback(() => {
     invoke<SystemStatus>("get_status").then(setStatus).catch(console.error);
@@ -79,6 +80,16 @@ export function StatusView() {
     const tick = () => invoke<GpuMetrics>("poll_gpu_metrics").then(setLiveMetrics).catch(() => {});
     tick();
     const t = setInterval(tick, 2000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Connected gamepads , polled independently of GPU state since a
+  // controller can be plugged/unplugged or drop its Bluetooth link at any
+  // time. get_controllers() is a read-only sysfs scan (see controllers.rs).
+  useEffect(() => {
+    const tick = () => invoke<ControllerInfo[]>("get_controllers").then(setControllers).catch(() => {});
+    tick();
+    const t = setInterval(tick, 3000);
     return () => clearInterval(t);
   }, []);
 
@@ -369,6 +380,52 @@ export function StatusView() {
             </div>
           )}
         </div>
+
+        {controllers.length > 0 && (
+          <>
+            <p className="section-title" style={{ marginTop: 24 }}>Controllers</p>
+            <div className="section-card">
+              {controllers.map((c, i) => (
+                <div key={c.js_node} style={{ padding: "10px 0", borderTop: i === 0 ? "none" : "1px solid #1e1e1e" }}>
+                  <div className="info-row">
+                    <div className="info-label">{c.name}</div>
+                    <div className="info-value" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <span>{c.driver}</span>
+                      <span style={{
+                        fontSize: 11, padding: "2px 7px", borderRadius: 4,
+                        background: "rgba(154,154,176,0.1)", color: "#8a9ab0",
+                        border: "1px solid rgba(154,154,176,0.25)",
+                      }}>
+                        {c.connection}
+                      </span>
+                      {c.battery_percent != null && (
+                        <span style={{
+                          fontSize: 11, padding: "2px 7px", borderRadius: 4,
+                          background: c.battery_percent > 20 ? "rgba(118,185,0,0.1)" : "rgba(232,160,0,0.15)",
+                          color: c.battery_percent > 20 ? "#76b900" : "#e8a000",
+                          border: `1px solid ${c.battery_percent > 20 ? "rgba(118,185,0,0.25)" : "rgba(232,160,0,0.4)"}`,
+                        }}>
+                          battery {c.battery_percent}%
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {c.hidraw_readable === false && (
+                    <div className="info-row">
+                      <div className="info-label" />
+                      <div className="info-value" style={{ fontSize: 11, color: "#e8a000" }}>
+                        Steam can't read this pad's raw device file, so in-game button
+                        remapping through Steam Input won't work , the pad itself still
+                        works normally otherwise. This is a udev rule conflict between
+                        the {c.driver} driver and Steam, not a GreenBoost setting.
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
 
         {(liveMetrics || poolBrief) && (
           <>

@@ -44,6 +44,9 @@ Public API:
     update(finding, replacement, *, dry_run=False) -> tuple[bool, str]
     refresh_manifest() -> dict[str, str]
     summary(roots) -> dict
+    inspect_external_folder(folder) -> list[dict]
+    install_external_folder_into_game(src_dir, game_dir, targets=None, disabled=None) -> list[dict]
+    restore_external_folder_from_game(game_dir, targets=None) -> list[dict]
 """
 from __future__ import annotations
 
@@ -207,13 +210,31 @@ class DllSpec:
 KNOWN: dict[str, DllSpec] = {
     # nvngx_*.dll , sourced from the official DLSS SDK at NVIDIA_DLSS_SDK_DIR
     # when reachable, else from the in-tree dlls/ mirror.  Latest tracks the
-    # SDK release on disk (currently 310.6.0).
+    # SDK release on disk.
+    # Floor raised 2026-08-28 from 310.6.0 to 310.8.0 , measured with
+    # _read_pe_fileversion() against a real Streamline 2.13 bundle (the
+    # DLSS 5 mod wave; see docs/dlss5-external-folders.md), not guessed.
     "nvngx_dlss.dll":  DllSpec("nvngx_dlss.dll",  "dlss-sr",
-        (310, 6, 0, 0), "DLSS Super Resolution",  "bundled-or-mirror"),
+        (310, 8, 0, 0), "DLSS Super Resolution",  "bundled-or-mirror"),
     "nvngx_dlssg.dll": DllSpec("nvngx_dlssg.dll", "dlss-fg",
-        (310, 6, 0, 0), "DLSS Frame Generation",  "bundled-or-mirror"),
+        (310, 8, 0, 0), "DLSS Frame Generation",  "bundled-or-mirror"),
     "nvngx_dlssd.dll": DllSpec("nvngx_dlssd.dll", "dlss-rr",
-        (310, 6, 0, 0), "DLSS Ray Reconstruction","bundled-or-mirror"),
+        (310, 8, 0, 0), "DLSS Ray Reconstruction","bundled-or-mirror"),
+    # DLSS 5 Neural Rendering , added 2026-08-28. NVIDIA has not published
+    # an official release containing this file yet (it surfaced via a
+    # leaked NBA 2K27 early-access build, see the DLSS-5-mod coverage this
+    # entry was added to support), so "bundled-or-mirror" will honestly
+    # fail here (empty bundle, Recol mirror 404) until NVIDIA ships one ,
+    # same failure mode as any other not-yet-cached DLL, never a false
+    # claim of availability. Get it via the external-DLL-folder mechanism
+    # (a folder you already populated yourself) instead of Update/Sync.
+    "nvngx_dlssnr.dll": DllSpec("nvngx_dlssnr.dll", "dlss-nr",
+        (310, 8, 0, 0), "DLSS Neural Rendering",  "bundled-or-mirror"),
+    # Shipped by "FINAL FANTASY VII REBIRTH" alongside the DLSS/Streamline
+    # set above; not part of the upscaling family GreenBoost updates, but
+    # recognised so the scanner and DllPicker stop showing them as unknown.
+    "nvngx_deepdvc.dll": DllSpec("nvngx_deepdvc.dll", "deepdvc",
+        (310, 3, 0, 0), "Deep DVC",                "bundled-or-mirror"),
 
     # Streamline component DLLs , always from NVIDIA's official GitHub.
     # PR-CCCC: expanded to cover sl.common (loader) and sl.reflex
@@ -226,22 +247,37 @@ KNOWN: dict[str, DllSpec] = {
     # Streamline row showed a permanent, un-clearable "update available"
     # badge. `scan_paths()` below also widens this against whatever is
     # newest in the cache, so this constant only needs to be a floor.
+    # Floor raised again 2026-08-28 from 2.12.0.0 to 2.13.0.0 , measured
+    # against a real Streamline 2.13 bundle, not guessed.
     "sl.dlss.dll":      DllSpec("sl.dlss.dll",      "streamline",
-        (2, 12, 0, 0), "Streamline DLSS SR",     "nvidia-streamline-github"),
+        (2, 13, 0, 0), "Streamline DLSS SR",     "nvidia-streamline-github"),
     "sl.dlss_g.dll":    DllSpec("sl.dlss_g.dll",    "streamline",
-        (2, 12, 0, 0), "Streamline DLSS FG",     "nvidia-streamline-github"),
+        (2, 13, 0, 0), "Streamline DLSS FG",     "nvidia-streamline-github"),
     "sl.dlss_d.dll":    DllSpec("sl.dlss_d.dll",    "streamline",
-        (2, 12, 0, 0), "Streamline DLSS RR",     "nvidia-streamline-github"),
+        (2, 13, 0, 0), "Streamline DLSS RR",     "nvidia-streamline-github"),
+    # Streamline DLSS Neural Rendering , see nvngx_dlssnr.dll above for why
+    # this has no working official fetch yet; same honest-failure behaviour.
+    "sl.dlss_nr.dll":   DllSpec("sl.dlss_nr.dll",   "streamline",
+        (2, 13, 0, 0), "Streamline DLSS Neural Rendering", "nvidia-streamline-github"),
     "sl.common.dll":    DllSpec("sl.common.dll",    "streamline",
-        (2, 12, 0, 0), "Streamline Loader",      "nvidia-streamline-github"),
+        (2, 13, 0, 0), "Streamline Loader",      "nvidia-streamline-github"),
     "sl.reflex.dll":    DllSpec("sl.reflex.dll",    "streamline",
-        (2, 12, 0, 0), "Streamline Reflex",      "nvidia-streamline-github"),
+        (2, 13, 0, 0), "Streamline Reflex",      "nvidia-streamline-github"),
     "sl.interposer.dll":DllSpec("sl.interposer.dll","streamline",
-        (2, 12, 0, 0), "Streamline Interposer",  "nvidia-streamline-github"),
+        (2, 13, 0, 0), "Streamline Interposer",  "nvidia-streamline-github"),
     "sl.nis.dll":       DllSpec("sl.nis.dll",       "streamline",
-        (2, 12, 0, 0), "Streamline NIS",         "nvidia-streamline-github"),
+        (2, 13, 0, 0), "Streamline NIS",         "nvidia-streamline-github"),
     "sl.pcl.dll":       DllSpec("sl.pcl.dll",       "streamline",
-        (2, 12, 0, 0), "Streamline PCL",         "nvidia-streamline-github"),
+        (2, 13, 0, 0), "Streamline PCL",         "nvidia-streamline-github"),
+    # The next three are shipped by "FINAL FANTASY VII REBIRTH" but were
+    # never tracked here , added 2026-08-28, floor measured from that
+    # install (2.8.0.0), not guessed.
+    "sl.deepdvc.dll":   DllSpec("sl.deepdvc.dll",   "streamline",
+        (2, 8, 0, 0),  "Streamline Deep DVC",   "nvidia-streamline-github"),
+    "sl.directsr.dll":  DllSpec("sl.directsr.dll",  "streamline",
+        (2, 8, 0, 0),  "Streamline DirectSR",   "nvidia-streamline-github"),
+    "sl.nvperf.dll":    DllSpec("sl.nvperf.dll",    "streamline",
+        (2, 8, 0, 0),  "Streamline NvPerf",     "nvidia-streamline-github"),
 }
 
 
@@ -282,6 +318,49 @@ def _read_pe_fileversion(path: Path) -> tuple[int, int, int, int] | None:
                 return ((ms >> 16) & 0xFFFF,  ms & 0xFFFF,
                         (ls >> 16) & 0xFFFF,  ls & 0xFFFF)
         start = idx + 1
+
+
+def _read_pe_string_info(path: Path) -> dict[str, str]:
+    """Best-effort read of a PE VS_VERSIONINFO StringFileInfo block ,
+    FileDescription and ProductName, when present. Never load-bearing for
+    any placement or swap decision, purely informational.
+
+    Not every PE carries these two keys , verified 2026-08-28 against a
+    real ReShade add-on (renodx-control-rr.addon64): it has a
+    VS_VERSIONINFO block with only OriginalFilename/FileVersion, no
+    FileDescription/ProductName, so this returns {} for it, not a guess.
+    Verified working against a real NVIDIA-signed DLL from the same day
+    (sl.interposer.dll from a genuine Streamline 2.13 bundle): returns
+    FileDescription "SL.INTERPOSER MODULE - PRODUCTION", ProductName
+    "NVIDIA STREAMLINE PRODUCTION". A raw byte scan rather than a full
+    resource-table walk , good enough for a preview list, not a place to
+    trust blindly.
+    """
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return {}
+    out: dict[str, str] = {}
+    for key in ("FileDescription", "ProductName"):
+        needle = key.encode("utf-16-le") + b"\x00\x00"
+        idx = data.find(needle)
+        if idx < 0:
+            continue
+        pos = idx + len(needle)
+        while pos + 1 < len(data) and data[pos] == 0 and data[pos + 1] == 0:
+            pos += 2
+        end = pos
+        while end + 1 < len(data):
+            if data[end] == 0 and data[end + 1] == 0:
+                break
+            end += 2
+        try:
+            value = data[pos:end].decode("utf-16-le").strip()
+        except UnicodeDecodeError:
+            value = ""
+        if value:
+            out[key] = value
+    return out
 
 
 def _fmt_ver(v: tuple[int, int, int, int]) -> str:
@@ -1205,6 +1284,260 @@ def install_cached_into_game(dll_name: str, game_dir: Path,
         return False, f"file IO failed: {e}"
     _prune_old_backups(target)
     return True, f"replaced {target.name} (backup at {bak.name})"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# External DLL folder , the user-supplied-directory mechanism (see
+# greenboost_proton/gb_proton_main.py's _external_dll_plan() docstring for
+# the launch-time symlink overlay this complements). Everything below
+# operates on an arbitrary directory the user already populated , never
+# downloads, never fetches, never assumes what the files are.
+# ──────────────────────────────────────────────────────────────────────
+
+def inspect_external_folder(folder: Path) -> list[dict]:
+    """Read-only preview of one external DLL folder: name, PE version, and
+    the friendly type if GreenBoost recognises the filename. Never writes
+    anything, never recurses , same ".dll", non-recursive scope as
+    _external_dll_plan() in gb_proton_main.py, so this preview matches
+    exactly what the launch overlay would link.
+    """
+    out: list[dict] = []
+    if not folder.is_dir():
+        return out
+    for name in sorted(os.listdir(folder)):
+        lname = name.lower()
+        if not lname.endswith(".dll"):
+            continue
+        p = folder / name
+        if not p.is_file():
+            continue
+        v = _read_pe_fileversion(p)
+        spec = KNOWN.get(lname)
+        strings = _read_pe_string_info(p)
+        try:
+            size = p.stat().st_size
+        except OSError:
+            size = 0
+        out.append({
+            "name":       name,
+            "version":    _fmt_ver(v) if v else "unknown",
+            "known_type": spec.pretty if spec else "",
+            "size_bytes": size,
+            "description": strings.get("FileDescription", ""),
+            "product":     strings.get("ProductName", ""),
+        })
+    return out
+
+
+def _is_streamline_family(name: str) -> bool:
+    """Kept in sync by hand with the identical helper in
+    greenboost_proton/gb_proton_main.py's _external_dll_plan() , same
+    reasoning as greenboost_ioctl.h staying a manual copy of the parent
+    repo's header: two processes (this one shells out from Rust, that one
+    runs inside the Proton launch) need the exact same answer and neither
+    imports the other."""
+    n = name.lower()
+    return n.startswith("sl.") or n.startswith("nvngx_")
+
+
+def _external_folder_target_dirs(dll_name: str, game_dir: Path,
+                                  targets: dict[str, list[str]] | None,
+                                  ) -> list[Path]:
+    """Same fallback rule as _external_dll_plan(): a name with a listed
+    target directory (or directories) goes there. A Streamline-family name
+    with no listed target falls back to sl.interposer.dll's own directory
+    when that's known , see _external_dll_plan()'s docstring for why
+    `game_dir` alone is the wrong guess for an Unreal title's launcher-stub
+    layout (confirmed against FINAL FANTASY VII REBIRTH, 2026-08-28).
+
+    Anything else falls back to `game_dir`, so copy-in and the launch
+    overlay always agree on where a given name lands."""
+    names = targets.get(dll_name.lower()) if targets else None
+    if names:
+        return [Path(n) for n in names]
+    interposer_dirs = targets.get("sl.interposer.dll") if targets else None
+    if interposer_dirs and _is_streamline_family(dll_name):
+        return [Path(n) for n in interposer_dirs]
+    return [game_dir]
+
+
+# Sidecar naming for a shipped file's pre-swap snapshot. Shared with Rust's
+# update_game_dlss (src-tauri/src/dlss.rs), which also writes
+# "<stem>.gdlss_original" for a ".dll" it swaps.
+def _original_sidecar(target: Path) -> Path:
+    return target.with_suffix(".gdlss_original")
+
+
+def install_external_folder_into_game(
+        src_dir: Path, game_dir: Path,
+        targets: dict[str, list[str]] | None = None,
+        disabled: list[str] | None = None) -> list[dict]:
+    """Permanently COPY every *.dll directly in `src_dir` into the
+    directories that already load a DLL of that name (from `targets`, the
+    same map _external_dll_plan() consumes , see game_overrides.rs
+    `external_dll_targets`), falling back to `game_dir` for any name with no
+    listed target , see _external_folder_target_dirs. Unlike the launch-time
+    symlink overlay, this survives Steam's "Verify integrity of game files",
+    because the files it puts there are real.
+
+    GreenBoost supplies the mechanism only , it never downloads, extracts,
+    or redistributes anything in `src_dir`.
+
+    A file the game already ships under that name is snapshotted via
+    `_original_sidecar()` (once, ever , shared with install_cached_into_
+    game's restore path) and backed up to a timestamped `.bak`, then
+    replaced. A file the game does NOT already ship has no shipped version
+    to restore to: a zero-byte `<name>.gb_added` marker is written *before*
+    the copy (so a crash between the two leaves an orphan marker, never an
+    orphan file), and restore_external_folder_from_game() only ever deletes
+    a file that marker proves this function added.
+
+    `disabled`: lowercased filenames to skip even though present in
+    `src_dir , the per-DLL enable/disable control in the UI. Lets a file
+    stay in the shared folder without being copied into this game.
+
+    Returns a list of {"name", "ok", "msg", "added"} , one row per
+    (dll, target directory) pair attempted; `added` distinguishes the two
+    cases above for the UI's "N replaced, M added" summary.
+    """
+    out: list[dict] = []
+    if not src_dir.is_dir():
+        return [{"name": "*", "ok": False, "msg": f"folder not found: {src_dir}"}]
+    if not game_dir.exists():
+        return [{"name": "*", "ok": False, "msg": f"game directory missing: {game_dir}"}]
+    try:
+        game_root = game_dir.resolve()
+    except OSError:
+        game_root = game_dir
+
+    try:
+        names = os.listdir(src_dir)
+    except OSError as e:
+        return [{"name": "*", "ok": False, "msg": f"could not list {src_dir}: {e}"}]
+
+    disabled_set = {n.lower() for n in (disabled or [])}
+    for name in sorted(names):
+        lname = name.lower()
+        if not lname.endswith(".dll"):
+            continue
+        if lname in disabled_set:
+            continue
+        src = src_dir / name
+        if not src.is_file():
+            continue
+        dst_dirs = _external_folder_target_dirs(name, game_dir, targets)
+        for dst_dir in dst_dirs:
+            try:
+                dst_dir_resolved = dst_dir.resolve()
+            except OSError:
+                out.append({"name": name, "ok": False,
+                            "msg": f"target directory unreadable: {dst_dir}"})
+                continue
+            try:
+                dst_dir_resolved.relative_to(game_root)
+            except ValueError:
+                out.append({"name": name, "ok": False,
+                            "msg": f"target {dst_dir} is outside the game directory, refused"})
+                continue
+            target = dst_dir_resolved / name
+            if target.is_symlink():
+                out.append({"name": name, "ok": False,
+                            "msg": "target is a symlink from the launch overlay , "
+                                   "disable the overlay toggle first, skipped"})
+                continue
+            if target.exists():
+                # Case 1: the game already ships this name.
+                original = _original_sidecar(target)
+                if not original.exists():
+                    try:
+                        shutil.copy2(target, original)
+                    except OSError as e:
+                        out.append({"name": name, "ok": False,
+                                    "msg": f"failed to snapshot shipped version ({e}) , install skipped"})
+                        continue
+                bak = target.with_suffix(target.suffix + f".bak.{int(time.time())}")
+                tmp = target.with_suffix(target.suffix + ".tmp")
+                try:
+                    shutil.copy2(target, bak)
+                    shutil.copy2(src, tmp)
+                    os.replace(str(tmp), str(target))
+                except OSError as e:
+                    try:
+                        tmp.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    out.append({"name": name, "ok": False, "msg": f"file IO failed: {e}"})
+                    continue
+                _prune_old_backups(target)
+                out.append({"name": name, "ok": True, "added": False,
+                            "msg": f"replaced {target} (backup at {bak.name})"})
+            else:
+                # Case 2: the game does not ship this name , mark first.
+                marker = target.with_suffix(target.suffix + ".gb_added")
+                try:
+                    marker.touch(exist_ok=True)
+                    shutil.copy2(src, target)
+                except OSError as e:
+                    try:
+                        marker.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    out.append({"name": name, "ok": False, "msg": f"file IO failed: {e}"})
+                    continue
+                out.append({"name": name, "ok": True, "added": True,
+                            "msg": f"added {target}"})
+    if not out:
+        out.append({"name": "*", "ok": False,
+                    "msg": f"no .dll files found in {src_dir}"})
+    return out
+
+
+def restore_external_folder_from_game(
+        game_dir: Path,
+        targets: dict[str, list[str]] | None = None) -> list[dict]:
+    """Undo install_external_folder_into_game() across `game_dir` and every
+    directory named in `targets`. A file with a `.gb_added` marker is
+    deleted along with its marker , GreenBoost never deletes a file it
+    cannot prove it added. A file with a `.gdlss_original` sidecar is copied
+    back from it (shared sidecar with the DLSS Picker's "Shipped" restore,
+    same trust model as restore_single_dll_to_original). A marker with no
+    sibling file is a silent no-op, not an error.
+    """
+    dirs: list[Path] = [game_dir]
+    if targets:
+        seen = {str(game_dir)}
+        for names in targets.values():
+            for n in names:
+                if n not in seen:
+                    seen.add(n)
+                    dirs.append(Path(n))
+
+    out: list[dict] = []
+    removed = 0
+    restored = 0
+    for d in dirs:
+        if not d.is_dir():
+            continue
+        for marker in sorted(d.glob("*.gb_added")):
+            target = marker.with_suffix("")  # strip ".gb_added"
+            try:
+                if target.exists() and not target.is_symlink():
+                    target.unlink()
+                    removed += 1
+                marker.unlink()
+            except OSError as e:
+                out.append({"name": target.name, "ok": False, "msg": f"could not remove: {e}"})
+        for original in sorted(d.glob("*.gdlss_original")):
+            target = original.with_suffix(".dll")
+            try:
+                shutil.copy2(original, target)
+                restored += 1
+            except OSError as e:
+                out.append({"name": target.name, "ok": False, "msg": f"restore failed: {e}"})
+    out.append({"name": "*", "ok": True,
+                "msg": f"{restored} file(s) restored to shipped version, "
+                       f"{removed} added file(s) removed"})
+    return out
 
 
 def download_all_known(progress=None) -> dict[str, tuple[bool, str]]:

@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "0.2.0"
+version = "1.0.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -21,7 +21,20 @@ tauri-build = { version = "2", features = [] }
 # tray-icon: close-to-tray, so closing the window no longer kills a
 # running session (Linux needs libayatana-appindicator3 at runtime; the
 # tray is built best-effort and the Suite falls back to quit-on-close).
-tauri = { version = "2", features = ["protocol-asset", "tray-icon", "image-png"] }
+#
+# Floor is 2.11, not just "2" , that's the first release pulling in
+# muda >= 0.19. Confirmed live 2026-08-31: on tauri 2.10.x (muda 0.17.2),
+# every tray menu item is built as a GtkMenuItem wrapping its label in a
+# GtkBox instead of using GTK's own label property
+# (muda-0.17.2 src/platform_impl/gtk/mod.rs create_gtk_item_for_menu_item);
+# libdbusmenu can't read a label off an item with no label child (see
+# libdbusmenu bug 1086563) and libayatana-appindicator exports it that way
+# to GNOME, so the tray dropdown showed three blank rows , the labels
+# build_tray() (main.rs) sets were always correct, this was a dependency
+# bug. muda 0.19.3's create_gtk_item_for_menu_item builds a plain
+# `gtk::MenuItem::builder().label(...)` instead. Don't let a future
+# `cargo update` walk this back below 2.11.
+tauri = { version = "2.11", features = ["protocol-asset", "tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

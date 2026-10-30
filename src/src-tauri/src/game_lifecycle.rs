@@ -261,6 +261,23 @@ fn steam_helper_activity(since: SystemTime) -> Option<String> {
     Some(name.to_string())
 }
 
+/// When the wrapper last wrote to this appid's log, as Unix seconds , the
+/// closest thing to "last GreenBoost launch" the Suite has, since the
+/// wrapper's own lines carry no timestamp of their own (see the sample in
+/// ~/.local/share/greenboost/proton-logs/greenboost-proton-<appid>.log ,
+/// plain text, no date prefix). The frontend formats this with the
+/// viewer's own locale rather than doing date formatting here, the same
+/// way `epoch_to_iso` in manager.rs is kept out of anything user-facing.
+///
+/// Added 2026-08-31 alongside the compat-tool badge: confirming a game
+/// actually ran through GreenBoost Proton used to require opening this log
+/// file by hand.
+pub fn last_launch_epoch(appid: &str) -> Option<u64> {
+    let meta = std::fs::metadata(wrapper_log_path(appid)).ok()?;
+    let modified = meta.modified().ok()?;
+    modified.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs())
+}
+
 fn wrapper_log_dir() -> std::path::PathBuf {
     let base = std::env::var("XDG_DATA_HOME")
         .map(std::path::PathBuf::from)
