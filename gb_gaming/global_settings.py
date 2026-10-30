@@ -106,6 +106,7 @@ class GlobalSettings:
     gplasync:                bool = True    # GREENBOOST_GPLASYNC , overlay dxvk-gplasync DLLs
     perf_lock:               bool = True    # GREENBOOST_PERF_LOCK , CPU governor + GPU clock lock
     compositor_suspend:      bool = True    # GREENBOOST_COMPOSITOR_SUSPEND , KWin/GNOME pause
+    game_mode:               bool = True    # GREENBOOST_GAME_MODE , per-game "game_mode" profile block (gb_gaming.game_mode); False = opt out everywhere
     ddr_prewarm:             bool = True    # GREENBOOST_DDR_PREWARM , touch T2 pages
     memlock_unlimited:       bool = True    # GREENBOOST_MEMLOCK_UNLIMITED , RLIMIT_MEMLOCK=∞
     vk_pipeline_cache:       bool = True    # GREENBOOST_VK_PIPELINE_CACHE , persistent VkPipelineCache
@@ -324,6 +325,7 @@ def as_env_dict(s: GlobalSettings | None = None) -> dict[str, str]:
     out["GREENBOOST_GPLASYNC"]           = "1" if s.gplasync            else "0"
     out["GREENBOOST_PERF_LOCK"]          = "1" if s.perf_lock           else "0"
     out["GREENBOOST_COMPOSITOR_SUSPEND"] = "1" if s.compositor_suspend  else "0"
+    out["GREENBOOST_GAME_MODE"]          = "1" if s.game_mode           else "0"
     out["GREENBOOST_DDR_PREWARM"]        = "1" if s.ddr_prewarm         else "0"
     out["GREENBOOST_MEMLOCK_UNLIMITED"]  = "1" if s.memlock_unlimited   else "0"
     out["GREENBOOST_VK_PIPELINE_CACHE"]  = "1" if s.vk_pipeline_cache   else "0"

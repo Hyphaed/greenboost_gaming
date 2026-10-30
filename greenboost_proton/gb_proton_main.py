@@ -3297,6 +3297,24 @@ def _run_greenboost_launch(proton_upstream, _upstream_label, _upstream_install_h
     # Share _PerfLock's crash-safe baseline , see _DesktopSuspend.acquire().
     _desktop.acquire(baseline=getattr(_perf_lock, "baseline", None))
 
+    # Per-game "game_mode" block: disable named GNOME extensions / stop named
+    # user units / keep the screen awake, restored exactly on exit (and by the
+    # next start after a crash). See gb_gaming/game_mode.py. Opt out with
+    # GREENBOOST_GAME_MODE=0.
+    _game_mode_on = False
+    try:
+        from gb_gaming import game_mode as _gm
+        # Not on a dry run: its exit skips the session try/finally.
+        _gm_cfg = (None if os.environ.get("GREENBOOST_DRY_RUN", "0") == "1"
+                   else _gm.parse_config(_per_game_profile))
+        if _gm_cfg:
+            _gm_done = _gm.acquire(_gm_cfg)
+            _game_mode_on = True
+            sys.stderr.write("[greenboost-proton] game mode: %s\n"
+                             % (", ".join(_gm_done) or "nothing to change"))
+    except Exception as _e:
+        sys.stderr.write("[greenboost-proton] game mode unavailable (%s)\n" % _e)
+
     # ── PR-GGGG: warm the GreenBoost DDR pool so first scene-transition
     #     overflow doesn't fault-in pages mid-frame ─────────────────────────────
     _prewarm_ddr_pool()
@@ -3604,6 +3622,12 @@ def _run_greenboost_launch(proton_upstream, _upstream_label, _upstream_install_h
             _desktop.release()
         except Exception:
             pass
+        if _game_mode_on:
+            try:
+                from gb_gaming import game_mode as _gm
+                _gm.release()
+            except Exception:
+                pass
         # ── B5: post-launch hooks ─────────────────────────────────────────────
         try:
             _run_hooks("post", gameid, gpu_name)
