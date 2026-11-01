@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { Icon } from "../icons";
 
@@ -15,6 +15,9 @@ function resolveSrc(image: string): string {
 
 export function GameHeroBanner({ image, name }: { image?: string; name: string }) {
   const [err, setErr] = useState(false);
+  // A new image path (another game selected, or a rescan) deserves a fresh
+  // attempt; a failure for the previous path must not stick.
+  useEffect(() => setErr(false), [image]);
   if (image && !err) {
     return <img src={resolveSrc(image)} alt={name} className="game-hero-img" onError={() => setErr(true)} />;
   }

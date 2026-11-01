@@ -1,4 +1,4 @@
-import type { GameOverrides, GameWrappers } from "./types";
+import type { GameOverrides } from "./types";
 import { VULKAN_LAYER_VISIBLE } from "./featureFlags";
 
 /// Single source of truth for "the recommended per-game override set" ,
@@ -12,16 +12,13 @@ export const OPTIMAL_OVERRIDES = {
   perf_lock:          true,
   compositor_suspend: true,
   vk_pipeline_cache:  true,
-  wrappers: {
-    gamemode: true,
-  },
 } as const;
 
-/// Keys of GameOverrides that `diffFromOptimal`/`countActiveOverrides`
-/// examine , "wrappers" stands in for `wrappers.gamemode` specifically,
-/// since that's the only wrapper field with a recommended value.
+/// Keys of GameOverrides that `diffFromOptimal` examines. "GameMode" used to
+/// be recommended here too, but it can't run inside Steam's compatibility
+/// container, so recommending it left the badge stuck on "Not optimized".
 type OptimalKey = "dlss_preset" | "gplasync" | "perf_lock" | "compositor_suspend"
-  | "vk_pipeline_cache" | "wrappers";
+  | "vk_pipeline_cache";
 
 /// vk_pipeline_cache lives entirely inside greenboost_vulkan_layer.c (same
 /// as reflex/nis, see countActiveOverrides below), which now defaults off
@@ -43,7 +40,6 @@ export function diffFromOptimal(o: GameOverrides): OptimalKey[] {
   if (o.compositor_suspend !== OPTIMAL_OVERRIDES.compositor_suspend) out.push("compositor_suspend");
   if (VULKAN_LAYER_VISIBLE && o.vk_pipeline_cache !== OPTIMAL_OVERRIDES.vk_pipeline_cache)
     out.push("vk_pipeline_cache");
-  if ((o.wrappers?.gamemode ?? false) !== OPTIMAL_OVERRIDES.wrappers.gamemode) out.push("wrappers");
   return out;
 }
 
@@ -51,19 +47,12 @@ export function diffFromOptimal(o: GameOverrides): OptimalKey[] {
 /// field to its recommended value in one write , used by both the
 /// per-field "Recommended" chips (one key at a time) and the "Apply all
 /// recommended" button (every key at once).
-export function optimalPatch(current: GameOverrides, only?: OptimalKey[]): Partial<GameOverrides> {
+export function optimalPatch(_current: GameOverrides, only?: OptimalKey[]): Partial<GameOverrides> {
   const keys = (only ?? (Object.keys(OPTIMAL_OVERRIDES) as OptimalKey[]))
     .filter(k => !HIDDEN_OPTIMAL_KEYS.includes(k));
   const patch: Partial<GameOverrides> = {};
   for (const key of keys) {
-    if (key === "wrappers") {
-      const wrappers: GameWrappers = {
-        gamemode: OPTIMAL_OVERRIDES.wrappers.gamemode,
-        mangohud: current.wrappers?.mangohud ?? false,
-        gamescope: current.wrappers?.gamescope ?? [],
-      };
-      patch.wrappers = wrappers;
-    } else {
+    {
       (patch as any)[key] = OPTIMAL_OVERRIDES[key];
     }
   }
@@ -84,18 +73,14 @@ export function optimalPatch(current: GameOverrides, only?: OptimalKey[]): Parti
 export function countActiveOverrides(o: GameOverrides): number {
   let n = 0;
   if (o.dlss_preset)                 n++;
-  if (o.governor)                    n++;
   if (o.gpu_profile)                 n++;
   if (o.gplasync !== null)           n++;
   if (o.perf_lock !== null)          n++;
   if (o.compositor_suspend !== null) n++;
   if (VULKAN_LAYER_VISIBLE && o.vk_pipeline_cache !== null) n++;
   if (VULKAN_LAYER_VISIBLE && o.reflex)                     n++;
-  if (o.hdr)                         n++;
   if (VULKAN_LAYER_VISIBLE && o.nis)                        n++;
   if (o.fps_cap !== 0)               n++;
-  if (o.wrappers?.gamemode)          n++;
   if (o.wrappers?.mangohud)          n++;
-  if ((o.wrappers?.gamescope?.length ?? 0) > 0) n++;
   return n;
 }

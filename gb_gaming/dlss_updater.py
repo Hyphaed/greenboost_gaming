@@ -58,7 +58,7 @@ import struct
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Iterable
 
@@ -205,6 +205,9 @@ class DllSpec:
     latest:    tuple[int, int, int, int]
     pretty:    str
     via:       str   # 'bundled-or-mirror' | 'nvidia-streamline-github'
+    # Optional DLLs are ones NVIDIA hasn't published (DLSS 5 Neural Rendering).
+    # Failing to fetch one is reported as a skip and never fails the sync.
+    optional:  bool = False
 
 
 KNOWN: dict[str, DllSpec] = {
@@ -229,12 +232,13 @@ KNOWN: dict[str, DllSpec] = {
     # claim of availability. Get it via the external-DLL-folder mechanism
     # (a folder you already populated yourself) instead of Update/Sync.
     "nvngx_dlssnr.dll": DllSpec("nvngx_dlssnr.dll", "dlss-nr",
-        (310, 8, 0, 0), "DLSS Neural Rendering",  "bundled-or-mirror"),
+        (310, 8, 0, 0), "DLSS Neural Rendering",  "bundled-or-mirror", optional=True),
     # Shipped by "FINAL FANTASY VII REBIRTH" alongside the DLSS/Streamline
-    # set above; not part of the upscaling family GreenBoost updates, but
-    # recognised so the scanner and DllPicker stop showing them as unknown.
+    # set above. NVIDIA ships it inside the Streamline SDK zip
+    # (bin/x64/nvngx_deepdvc.dll, verified for 2.14.1 and 2.14.16), so it
+    # is fetched the same way as the sl.*.dll files.
     "nvngx_deepdvc.dll": DllSpec("nvngx_deepdvc.dll", "deepdvc",
-        (310, 3, 0, 0), "Deep DVC",                "bundled-or-mirror"),
+        (310, 3, 0, 0), "Deep DVC",                "nvidia-streamline-github"),
 
     # Streamline component DLLs , always from NVIDIA's official GitHub.
     # PR-CCCC: expanded to cover sl.common (loader) and sl.reflex
@@ -258,7 +262,8 @@ KNOWN: dict[str, DllSpec] = {
     # Streamline DLSS Neural Rendering , see nvngx_dlssnr.dll above for why
     # this has no working official fetch yet; same honest-failure behaviour.
     "sl.dlss_nr.dll":   DllSpec("sl.dlss_nr.dll",   "streamline",
-        (2, 13, 0, 0), "Streamline DLSS Neural Rendering", "nvidia-streamline-github"),
+        (2, 13, 0, 0), "Streamline DLSS Neural Rendering", "nvidia-streamline-github",
+        optional=True),
     "sl.common.dll":    DllSpec("sl.common.dll",    "streamline",
         (2, 13, 0, 0), "Streamline Loader",      "nvidia-streamline-github"),
     "sl.reflex.dll":    DllSpec("sl.reflex.dll",    "streamline",
@@ -508,6 +513,15 @@ def _prune_old_backups(target: Path, keep: int = 3) -> None:
             pass
 
 
+def _in_backup_dir(p: Path, root: Path) -> bool:
+    """True when p sits under a backup folder (e.g. _DLSS5_Backup) below root."""
+    try:
+        parts = p.relative_to(root).parts[:-1]
+    except ValueError:
+        return False
+    return any("backup" in d.lower() for d in parts)
+
+
 def scan_paths(roots: Iterable[Path]) -> list[DllFinding]:
     out: list[DllFinding] = []
     canon = {k.lower(): v for k, v in KNOWN.items()}
@@ -534,7 +548,7 @@ def scan_paths(roots: Iterable[Path]) -> list[DllFinding]:
                 seen += 1
                 if seen > 65_535:
                     break
-                if not p.is_file():
+                if not p.is_file() or _in_backup_dir(p, root):
                     continue
                 spec = canon.get(p.name.lower())
                 if not spec:
@@ -591,6 +605,7 @@ def _read_bundled_dll(dll_name: str) -> tuple[bool, bytes | str]:
     sdk_path = NVIDIA_DLSS_SDK_WIN_DLL_DIR / spec.canonical
     if sdk_path.is_file():
         try:
+            _SOURCE_USED[spec.canonical] = "NVIDIA DLSS SDK on disk"
             return True, sdk_path.read_bytes()
         except OSError:
             # SDK present but unreadable , fall through.
@@ -604,12 +619,19 @@ def _read_bundled_dll(dll_name: str) -> tuple[bool, bytes | str]:
             if ok:
                 return True, payload
 
+    # NVIDIA's NGX update server (ngx.download.nvidia.com) was evaluated and
+    # is deliberately not a source: its production namespace stops at DLSS
+    # 310.6.0 (310.9 exists only in the "dev-mode" staging namespace), it has
+    # no dlssnr or deepdvc feature, and the bucket ignores prefix queries, so
+    # finding a file means paging ~80,000 keys. Using it would downgrade.
+
     src = BUNDLE_DIR / spec.canonical
     if not src.exists():
         return False, (f"bundled DLL missing: {src} "
                        f"(also tried SDK at {sdk_path} and "
                        f"github.com/{NVIDIA_DLSS_REPO})")
     data = src.read_bytes()
+    _SOURCE_USED[spec.canonical] = "bundled (dlls/)"
     manifest = _read_bundle_manifest()
     expected = manifest.get(spec.canonical) or manifest.get(spec.canonical.lower())
     if expected and expected.get("sha256"):
@@ -633,79 +655,147 @@ def _http_get(url: str, *, timeout: float = HTTP_TIMEOUT_S) -> bytes | None:
         return None
 
 
+IMAGE_FILE_MACHINE_AMD64 = 0x8664
+
+# Which fetcher served each DLL during this process, surfaced in the cache
+# manifest so the UI can show where a file really came from.
+_SOURCE_USED: dict[str, str] = {}
+
+
+def _pe_machine(data: bytes) -> int | None:
+    """COFF Machine field of a PE image, or None when it isn't a PE."""
+    if len(data) < 0x40 or data[:2] != b"MZ":
+        return None
+    off = struct.unpack_from("<I", data, 0x3C)[0]
+    if off + 6 > len(data) or data[off:off + 4] != b"PE\0\0":
+        return None
+    return struct.unpack_from("<H", data, off + 4)[0]
+
+
+def _is_x64_pe(data: bytes) -> bool:
+    return _pe_machine(data) == IMAGE_FILE_MACHINE_AMD64
+
+
+# One Streamline SDK zip is ~270 MB and holds every sl.*.dll, so it is
+# downloaded once per process and all its bin/x64 DLLs are kept in memory.
+_STREAMLINE_ZIP_CACHE: dict[str, dict[str, bytes]] = {}
+
+
+def _streamline_x64_bundle(tag: str, assets: list[dict]) -> dict[str, bytes]:
+    """{lowercase dll name: bytes} for every x64 DLL under bin/x64/ in the
+    release's x64 SDK zip.  The release also ships *-aarch64.zip and
+    *-arm64ec.zip; those are ARM binaries a Windows x64 game can't load, so
+    they are never considered (the old code took whichever zip came first,
+    which was the aarch64 one)."""
+    if tag in _STREAMLINE_ZIP_CACHE:
+        return _STREAMLINE_ZIP_CACHE[tag]
+    import io
+    import zipfile
+    out: dict[str, bytes] = {}
+    for asset in assets:
+        name = (asset.get("name") or "").lower()
+        url = asset.get("browser_download_url") or ""
+        if not url or not name.endswith(".zip") or "streamline" not in name:
+            continue
+        if any(a in name for a in ("aarch64", "arm64")):
+            continue
+        blob = _http_get(url, timeout=600)
+        if not blob:
+            continue
+        try:
+            with zipfile.ZipFile(io.BytesIO(blob)) as z:
+                for member in z.namelist():
+                    m = member.replace("\\", "/").lower()
+                    # bin/x64/ holds the Production builds; _artifacts/ holds
+                    # Develop builds with the same file names.
+                    if m.startswith("bin/x64/") and m.endswith(".dll"):
+                        data = z.read(member)
+                        if _is_x64_pe(data):
+                            out[os.path.basename(m)] = data
+        except zipfile.BadZipFile:
+            continue
+        if out:
+            break
+    _STREAMLINE_ZIP_CACHE[tag] = out
+    return out
+
+
+_STREAMLINE_REL_CACHE: dict[str, dict | None] = {}
+
+
+def _latest_tag_without_api() -> str | None:
+    """Latest Streamline tag from github.com's own redirect. The REST API
+    allows 60 unauthenticated requests an hour per IP; a sync used to spend
+    one per DLL and hit that limit, failing every Streamline file."""
+    import re
+    try:
+        req = urllib.request.Request(
+            f"https://github.com/{NVIDIA_STREAMLINE_REPO}/releases/latest",
+            method="HEAD", headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_S) as r:
+            m = re.search(r"/releases/tag/([^/?#]+)$", r.geturl())
+            return m.group(1) if m else None
+    except (urllib.error.URLError, OSError):
+        return None
+
+
+def _streamline_release(pinned: str) -> dict | None:
+    """The release to read DLLs from: {tag_name, assets}. Looked up once per
+    process (not once per DLL). Tries the REST API, then falls back to
+    github.com's redirect plus the standard x64 zip name, which needs no API
+    quota. None when both fail."""
+    key = pinned or "latest"
+    if key in _STREAMLINE_REL_CACHE:
+        return _STREAMLINE_REL_CACHE[key]
+    endpoint = (f"{NVIDIA_STREAMLINE_API}/releases/tags/{pinned}" if pinned
+                else f"{NVIDIA_STREAMLINE_API}/releases/latest")
+    rel = None
+    raw = _http_get(endpoint)
+    if raw:
+        try:
+            rel = json.loads(raw)
+        except json.JSONDecodeError:
+            rel = None
+    if not (isinstance(rel, dict) and rel.get("assets")):
+        tag = pinned or _latest_tag_without_api()
+        rel = None
+        if tag:
+            name = f"streamline-sdk-{tag}.zip"
+            rel = {"tag_name": tag, "assets": [{
+                "name": name,
+                "browser_download_url":
+                    f"https://github.com/{NVIDIA_STREAMLINE_REPO}/releases/download/{tag}/{name}"}]}
+    _STREAMLINE_REL_CACHE[key] = rel
+    return rel
+
+
 def _fetch_streamline_release(dll_name: str,
                                cfg: SourceConfig | None = None) -> tuple[bool, bytes | str]:
-    """Fetch a Streamline DLL from NVIDIA's official GitHub releases.
+    """Fetch a Streamline (or Streamline-bundled nvngx_*) DLL from NVIDIA's
+    official GitHub release, x64 build only.
 
-    Strategy: GET /releases/latest (or /releases/tags/<tag> when pinned) →
-    find an asset whose filename matches the DLL.  Streamline ships its DLLs
-    in a zipped release bundle named e.g. `streamline_sdk_*.zip`; we pull
-    the bundle and extract the single DLL we want.
-
-    Note: this is a public NVIDIA repo , no auth required.  The
-    function still degrades gracefully on rate-limit hits (the
-    unauth GitHub rate limit is 60 req/hr per IP)."""
+    GET /releases/latest (or /releases/tags/<tag> when pinned), then read
+    the DLL from bin/x64/ inside the x64 SDK zip.  Public repo, no auth; the
+    unauthenticated GitHub rate limit is 60 requests/hour per IP."""
     spec = KNOWN.get(dll_name.lower())
     if not spec:
         return False, f"unknown DLL: {dll_name}"
 
     pinned = (cfg.streamline_gh_tag if cfg else "") or \
              os.environ.get("NVIDIA_STREAMLINE_GH_TAG", "").strip()
-    endpoint = (f"{NVIDIA_STREAMLINE_API}/releases/tags/{pinned}" if pinned
-                else f"{NVIDIA_STREAMLINE_API}/releases/latest")
-    rel_json = _http_get(endpoint)
-    if not rel_json:
-        return False, "could not query NVIDIAGameWorks/Streamline releases (rate-limited?)"
-    try:
-        rel = json.loads(rel_json)
-    except json.JSONDecodeError:
-        return False, "bad JSON from NVIDIA Streamline API"
+    rel = _streamline_release(pinned)
+    if rel is None:
+        return False, ("could not reach NVIDIAGameWorks/Streamline on GitHub "
+                       "(offline, or the API limit of 60 requests an hour is used up)")
 
-    # Look for an asset whose filename contains our DLL.  Streamline
-    # asset naming has varied over releases (.zip, .7z, individual
-    # binaries) , match generously.
-    target_lower = spec.canonical.lower()
-    candidates: list[tuple[str, str]] = []  # (filename, download_url)
-    for asset in rel.get("assets") or []:
-        name = (asset.get("name") or "").lower()
-        url  = asset.get("browser_download_url") or ""
-        if not url:
-            continue
-        # Direct DLL hit?
-        if name == target_lower:
-            return _http_then_return(url) or (False, f"asset {name} download failed")
-        # Bundle that likely contains our DLL?
-        if name.endswith((".zip", ".7z")) and ("streamline" in name or "sl" in name):
-            candidates.append((name, url))
-
-    # If no direct asset, try the bundles.
-    import zipfile, io
-    for name, url in candidates:
-        if not name.endswith(".zip"):
-            continue  # .7z requires py7zr (not stdlib); skip
-        blob = _http_get(url, timeout=60)
-        if not blob:
-            continue
-        try:
-            with zipfile.ZipFile(io.BytesIO(blob)) as z:
-                for member in z.namelist():
-                    if member.lower().endswith("/" + target_lower) \
-                            or member.lower().endswith("\\" + target_lower) \
-                            or os.path.basename(member).lower() == target_lower:
-                        return True, z.read(member)
-        except zipfile.BadZipFile:
-            continue
-
-    return False, (f"{spec.canonical} not found in NVIDIA Streamline release "
-                   f"'{rel.get('tag_name', '?')}'")
-
-
-def _http_then_return(url: str) -> tuple[bool, bytes | str] | None:
-    """Helper , fetch URL, validate basic plausibility."""
-    blob = _http_get(url, timeout=60)
-    if blob is None or len(blob) < 1024:
-        return None
-    return True, blob
+    tag = rel.get("tag_name", "?")
+    bundle = _streamline_x64_bundle(tag, rel.get("assets") or [])
+    data = bundle.get(spec.canonical.lower())
+    if data is not None:
+        _SOURCE_USED[spec.canonical] = f"NVIDIA Streamline SDK {tag}"
+        return True, data
+    return False, (f"{spec.canonical} not found in the x64 NVIDIA Streamline "
+                   f"release '{tag}'")
 
 
 # PR-GGGG: official NVIDIA/DLSS repo , used as a network source for the
@@ -759,49 +849,101 @@ def _fetch_nvidia_dlss_github(dll_name: str,
     if blob is None or len(blob) < 1024:
         return False, f"download from {url} failed"
     # Sanity-check: must start with "MZ" , Windows PE.
-    if blob[:2] != b"MZ":
-        return False, f"download from {url} is not a Windows PE"
+    if not _is_x64_pe(blob):
+        return False, f"download from {url} is not an x64 Windows PE"
+    _SOURCE_USED[spec.canonical] = f"NVIDIA DLSS GitHub {tag}"
     return True, blob
 
 
 def _fetch_community_mirror(dll_name: str, base_url: str) -> tuple[bool, bytes | str]:
     """Download a DLL from a community mirror.
 
-    The Recol/DLSS-Updater-DLLs repo organises DLLs by family/version
-    under subdirectories , the bare `<base>/<dll>` URL 404s.  The
-    upstream DLSS-Updater tool reads `manifest.json` first to resolve
-    each DLL to its actual storage URL.  We do the same.
-
-    For non-Recol custom mirrors (no manifest.json in expected shape),
-    we fall back to the flat `<base>/<dll>` pattern.
-    """
+    Recol/DLSS-Updater-DLLs keeps a `manifest.json` at the REPO ROOT, keyed
+    by DLL name at the top level; each entry carries a `url` (a release
+    asset) or the file sits under `dlls/`.  `base_url` ends in `/dlls`, so the
+    manifest is one level up.  Mirrors without that manifest fall back to the
+    flat `<base>/<dll>` pattern.  Only x64 PE files are accepted."""
     spec = KNOWN.get(dll_name.lower())
     if not spec or not base_url:
         return False, "no mirror configured"
 
-    # Try the mirror's manifest first (Recol layout).
-    blob = _http_get(f"{base_url.rstrip('/')}/manifest.json")
-    if blob is not None:
+    base = base_url.rstrip("/")
+    root = base[:-len("/dlls")] if base.endswith("/dlls") else base
+    for mf_url in (f"{root}/manifest.json", f"{base}/manifest.json"):
+        blob = _http_get(mf_url)
+        if blob is None:
+            continue
         try:
             mf = json.loads(blob.decode("utf-8"))
-            entry = (mf.get("dlls") or {}).get(spec.canonical) \
-                 or (mf.get("dlls") or {}).get(spec.canonical.lower())
-            if isinstance(entry, dict):
-                url = entry.get("url") or entry.get("download_url")
-                if url:
-                    dll_blob = _http_get(url)
-                    if dll_blob and len(dll_blob) >= 1024:
-                        return True, dll_blob
         except (json.JSONDecodeError, UnicodeDecodeError):
-            pass  # fall through to flat-layout retry
+            continue
+        table = mf if isinstance(mf, dict) else {}
+        table = {**(table.get("dlls") or {}), **{k: v for k, v in table.items() if k != "dlls"}}
+        entry = table.get(spec.canonical) or table.get(spec.canonical.lower())
+        if isinstance(entry, dict):
+            url = entry.get("url") or entry.get("download_url")
+            if url:
+                dll_blob = _http_get(url, timeout=60)
+                if dll_blob and len(dll_blob) >= 1024 and _is_x64_pe(dll_blob):
+                    _SOURCE_USED[spec.canonical] = "community mirror (Recol)"
+                    return True, dll_blob
+        break
 
-    # Flat layout , internal mirrors that just GET <base>/<dll>.
-    dll_blob = _http_get(f"{base_url.rstrip('/')}/{spec.canonical}")
+    dll_blob = _http_get(f"{base}/{spec.canonical}")
     if dll_blob is None:
-        return False, "download failed (manifest+direct both 404)"
+        return False, "not on the community mirror"
     if len(dll_blob) < 1024:
         return False, f"download too small ({len(dll_blob)} bytes) , probably 404"
+    if not _is_x64_pe(dll_blob):
+        return False, "mirror file is not an x64 PE"
+    _SOURCE_USED[spec.canonical] = "community mirror (Recol)"
     return True, dll_blob
+
+
+
+# NVIDIA doesn't publish nvngx_dlssnr.dll, so there is no trusted download.
+# Only builds whose full SHA-256 is listed here are ever cached or installed.
+# A valid Authenticode signature is not enough: a widely copied patched build
+# carries NVIDIA's signature over different content, and the Recol mirror's
+# copy has the same size as the real 310.8.0 but a different hash.
+TRUSTED_SHA256: dict[str, dict[str, str]] = {
+    "nvngx_dlssnr.dll": {
+        "e16bcf15e16e13f527491cdf7845b2fe6521a738d8f7c9c721866a8496e1fc8e":
+            "NVIDIA-signed 310.8.0 (RTX 50)",
+    },
+}
+
+
+def _trust_error(canonical: str, data: bytes) -> str | None:
+    """None when `data` may be used; otherwise why it was refused."""
+    allowed = TRUSTED_SHA256.get(canonical.lower())
+    if allowed is None:
+        return None
+    got = _sha256(data)
+    if got in allowed:
+        return None
+    return (f"unverified build (sha256 {got[:12]}…), not a known NVIDIA "
+            f"{canonical}; refusing to use it")
+
+
+def _read_local_dlss5(dll_name: str) -> tuple[bool, bytes | str]:
+    """A copy the user already placed in the DLSS5 asset folder (the one the
+    "Select DLSS5 folder" button sets).  Last resort for the Neural Rendering
+    DLLs, which NVIDIA hasn't published."""
+    try:
+        from gb_gaming import dlss5
+        folder = dlss5.asset_dir()
+    except Exception:
+        folder = Path.home() / ".local/share/greenboost/dlss5"
+    p = Path(folder) / dll_name
+    try:
+        data = p.read_bytes()
+    except OSError:
+        return False, f"not published by NVIDIA yet (and no copy in {folder})"
+    if not _is_x64_pe(data):
+        return False, f"{p} is not an x64 PE"
+    _SOURCE_USED[KNOWN[dll_name.lower()].canonical] = "your DLSS5 folder"
+    return True, data
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -832,7 +974,8 @@ def _versions_dir(canonical_name: str) -> Path:
 
 
 def _write_runtime_manifest_entry(dll_name: str, sha256: str,
-                                   version: str, source: str) -> None:
+                                   version: str, source: str,
+                                   make_current: bool = True) -> None:
     """Append-or-update one entry in libraries/manifest.json.
 
     Keyed by (dll name, version) , every version ever fetched gets its own
@@ -850,10 +993,11 @@ def _write_runtime_manifest_entry(dll_name: str, sha256: str,
     cur = _read_runtime_manifest()
     cur.setdefault("dlls", {})
     entry = cur["dlls"].setdefault(dll_name, {})
-    entry["version"]    = version   # legacy "current" pointer
-    entry["sha256"]     = sha256
-    entry["fetched_at"] = int(time.time())
-    entry["source"]     = source
+    if make_current:
+        entry["version"]    = version   # legacy "current" pointer
+        entry["sha256"]     = sha256
+        entry["fetched_at"] = int(time.time())
+        entry["source"]     = source
     entry.setdefault("versions", {})
     entry["versions"][version] = {
         "sha256":     sha256,
@@ -888,6 +1032,7 @@ def download_latest(dll_name: str,
 
     cfg = get_sources()
     source_label = ""   # populated as we resolve which source served us.
+    _SOURCE_USED.pop(spec.canonical, None)
 
     if spec.via == "nvidia-streamline-github":
         ok, payload = _fetch_streamline_release(dll_name, cfg)
@@ -898,28 +1043,15 @@ def download_latest(dll_name: str,
             tag = _DLSS_GH_TAG_CACHE.get("latest", "?")
             source_label = f"github://{NVIDIA_DLSS_REPO}@{tag}"
         elif cfg.nvngx_source == "bundled":
+            # Chain: DLSS SDK on disk -> NVIDIA/DLSS GitHub -> NVIDIA NGX
+            # servers -> in-tree dlls/ -> Recol mirror.  The runtime manifest
+            # records which one actually served the file.
             ok, payload = _read_bundled_dll(dll_name)
             source_label = "bundled (dlls/)"
             if not ok:
-                # PR-CCCC: auto-fallback to Recol when the bundle is
-                # empty or partial.  This matches what Sync DLSS library
-                # already does for bulk fetches , the user's intent
-                # when clicking "Update DLSS" is "get me the DLLs",
-                # not "fail because a config file says bundled-only".
-                # The runtime manifest still records the actual source
-                # used so the chain of custody is auditable.
                 recol_base = COMMUNITY_MIRRORS.get("recol", "")
                 if recol_base and spec.via == "bundled-or-mirror":
                     ok, payload = _fetch_community_mirror(dll_name, recol_base)
-                    source_label = (
-                        f"fallback: recol {recol_base}" if ok
-                        else "bundled (empty) → recol fallback failed")
-                if not ok:
-                    return False, (
-                        f"{payload} , bundle is empty and the Recol "
-                        "fallback couldn't reach the mirror.  Run "
-                        "Sync DLSS library once with internet to "
-                        "populate the cache.")
         else:
             base = cfg.nvngx_base_url()
             if not base:
@@ -927,18 +1059,48 @@ def download_latest(dll_name: str,
             ok, payload = _fetch_community_mirror(dll_name, base)
             source_label = f"{cfg.nvngx_source}: {base}"
 
+    if ok:
+        bad = _trust_error(spec.canonical, payload)  # type: ignore[arg-type]
+        if bad:
+            ok, payload = False, bad
+        elif not _is_x64_pe(payload):  # type: ignore[arg-type]
+            ok, payload = False, "fetched file is not an x64 PE"
+    if not ok and spec.optional:
+        # Last resort for the DLSS 5 files NVIDIA hasn't published: a copy
+        # the user already placed in the DLSS5 folder (hash-checked too).
+        ok2, payload2 = _read_local_dlss5(spec.canonical)
+        if ok2 and not _trust_error(spec.canonical, payload2):  # type: ignore[arg-type]
+            ok, payload = True, payload2
+        elif ok2:
+            payload = _trust_error(spec.canonical, payload2)  # type: ignore[arg-type]
+            _SOURCE_USED.pop(spec.canonical, None)
+    if ok:
+        source_label = _SOURCE_USED.get(spec.canonical, source_label)
+
     if not ok:
         return False, payload  # type: ignore[return-value]
 
     target_dir = (dest_dir or LIBRARIES_DIR)
     target_dir.mkdir(parents=True, exist_ok=True)
     dest = target_dir / spec.canonical
+    new_ver = None
     try:
-        dest.write_bytes(payload)  # type: ignore[arg-type]
-    except OSError as e:
-        return False, f"write failed: {e}"
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".dll", delete=False) as tf:
+            tf.write(payload)  # type: ignore[arg-type]
+        new_ver = _read_pe_fileversion(Path(tf.name))
+        os.unlink(tf.name)
+    except OSError:
+        pass
+    old_ver = _read_pe_fileversion(dest) if dest.is_file() else None
+    keep_current = bool(new_ver and old_ver and new_ver < old_ver)
+    if not keep_current:
+        try:
+            dest.write_bytes(payload)  # type: ignore[arg-type]
+        except OSError as e:
+            return False, f"write failed: {e}"
 
-    ver = _read_pe_fileversion(dest)
+    ver = new_ver if keep_current else _read_pe_fileversion(dest)
     if ver is None:
         return False, "fetched bytes are not a recognisable PE"
 
@@ -948,7 +1110,7 @@ def download_latest(dll_name: str,
         ver_str = _fmt_ver(ver)
         _write_runtime_manifest_entry(
             spec.canonical, _sha256(payload),  # type: ignore[arg-type]
-            ver_str, source_label)
+            ver_str, source_label, make_current=not keep_current)
         # Multi-version cache: keep every distinct version ever fetched,
         # keyed by its own version string, so it stays selectable later
         # even after a newer one overwrites the flat "current" file above.
@@ -1035,7 +1197,7 @@ def list_cached_dlls() -> list[dict]:
     version) pair: {name, version, sha256, source, fetched_at, size_bytes,
     path}. Multiple entries can share the same `name` now that fetches are
     kept in libraries/versions/<dll>/<version>.dll instead of being
-    overwritten; sorted name, then newest-fetched-first, so a caller that
+    overwritten; sorted name, then highest-version-first, so a caller that
     only wants "the current one" can just take the first match per name.
     Drives the per-game version picker , the user can select and install
     any previously-fetched version, not only the latest.
@@ -1092,7 +1254,11 @@ def list_cached_dlls() -> list[dict]:
                 "path":       str(entry),
             })
 
-    out.sort(key=lambda x: (x["name"].lower(), -x["fetched_at"]))
+    # Highest version first, not newest fetch first: a fallback source that
+    # serves an older build must never become the "current" one.
+    out.sort(key=lambda x: (x["name"].lower(),
+                            tuple(-n for n in (_parse_ver(x["version"]) or (0, 0, 0, 0))),
+                            -x["fetched_at"]))
     return out
 
 
@@ -1146,7 +1312,8 @@ def install_streamline_bundle_into_game(
         # Search the game tree (depth ≤ 5) for this specific DLL.
         target: Path | None = None
         for p in game_dir.rglob(src.name):
-            if p.is_file() and p.name.lower() == canon_lower:
+            if (p.is_file() and p.name.lower() == canon_lower
+                    and not _in_backup_dir(p, game_dir)):
                 target = p
                 break
         if target is None:
@@ -1180,7 +1347,7 @@ def restore_single_dll_to_original(dll_name: str, game_dir: Path) -> tuple[bool,
         return False, f"unknown DLL: {dll_name}"
     target = None
     for p in game_dir.rglob(spec.canonical):
-        if p.is_file():
+        if p.is_file() and not _in_backup_dir(p, game_dir):
             target = p; break
     if target is None:
         return False, f"{spec.canonical} not present in {game_dir.name}"
@@ -1241,7 +1408,7 @@ def install_cached_into_game(dll_name: str, game_dir: Path,
     # Find the in-game DLL (any depth ≤ 5).
     target = None
     for p in game_dir.rglob(spec.canonical):
-        if p.is_file():
+        if p.is_file() and not _in_backup_dir(p, game_dir):
             target = p; break
     if target is None:
         return False, f"{spec.canonical} not present in {game_dir.name}"
@@ -1540,6 +1707,53 @@ def restore_external_folder_from_game(
     return out
 
 
+def _purge_non_x64_cache() -> list[str]:
+    """Delete cached DLLs that aren't x64 PE files and drop their manifest
+    entries.  Earlier syncs cached Streamline 2.14.x from the aarch64 zip
+    (machine 0xaa64), which a Windows x64 game cannot load.  Returns the
+    removed paths relative to the cache."""
+    removed: list[str] = []
+    bad_by_name: dict[str, set[str]] = {}
+
+    def bad(path: Path) -> bool:
+        try:
+            m = _pe_machine(path.read_bytes())
+        except OSError:
+            return False
+        return m is not None and m != IMAGE_FILE_MACHINE_AMD64
+
+    for f in LIBRARIES_DIR.glob("*.dll"):
+        if bad(f):
+            f.unlink(missing_ok=True)
+            removed.append(f.name)
+            bad_by_name.setdefault(f.name, set())
+    versions_root = LIBRARIES_DIR / "versions"
+    if versions_root.is_dir():
+        for d in versions_root.iterdir():
+            for f in d.glob("*.dll") if d.is_dir() else []:
+                if bad(f):
+                    f.unlink(missing_ok=True)
+                    removed.append(f"{d.name}/{f.name}")
+                    bad_by_name.setdefault(d.name, set()).add(f.stem)
+    if bad_by_name:
+        mf = _read_runtime_manifest()
+        for name, vers in bad_by_name.items():
+            entry = (mf.get("dlls") or {}).get(name)
+            if not entry:
+                continue
+            for v in vers:
+                (entry.get("versions") or {}).pop(v, None)
+            left = sorted(entry.get("versions") or {}, key=lambda v: _parse_ver(v) or (0,))
+            if left:
+                entry["version"] = left[-1]
+            elif name in mf.get("dlls", {}):
+                mf["dlls"].pop(name)
+        tmp = LIBRARIES_DIR / "manifest.json.tmp"
+        tmp.write_text(json.dumps(mf, indent=2))
+        os.replace(str(tmp), str(_runtime_manifest_path()))
+    return removed
+
+
 def download_all_known(progress=None) -> dict[str, tuple[bool, str]]:
     """Pull every DLL in KNOWN into the runtime cache at LIBRARIES_DIR.
 
@@ -1562,64 +1776,29 @@ def download_all_known(progress=None) -> dict[str, tuple[bool, str]]:
     LIBRARIES_DIR.mkdir(parents=True, exist_ok=True)
     _rekey_versions_cache()
     cfg = get_sources()
-    fallback_active = (cfg.nvngx_source == "bundled")
 
     if progress:
         progress(f"Caching {len(KNOWN)} DLLs into {LIBRARIES_DIR} …")
-        if fallback_active:
-            progress("(bundle empty / partial → community mirror used "
-                     "as auto-fallback for nvngx_*.dll)")
+
+    for gone in _purge_non_x64_cache():
+        if progress:
+            progress(f"[purge]    {gone} was not an x64 build, removed from the cache")
 
     for dll_name in KNOWN:
         if progress:
             progress(f"[fetch]    {dll_name}")
         ok, payload = download_latest(dll_name)
-        if not ok and fallback_active and \
-           KNOWN[dll_name].via == "bundled-or-mirror":
-            # Try Recol as a one-off override.  Don't persist this in
-            # sources.conf , Sync stays scoped to this single call.
-            if progress:
-                progress(f"[retry]    {dll_name} via community mirror")
-            recol_base = COMMUNITY_MIRRORS["recol"]
-            ok_blob, blob = _fetch_community_mirror(dll_name, recol_base)
-            if ok_blob:
-                dest = LIBRARIES_DIR / KNOWN[dll_name].canonical
-                try:
-                    dest.write_bytes(blob)  # type: ignore[arg-type]
-                    ver = _read_pe_fileversion(dest)
-                    if ver is None:
-                        ok, payload = False, "fallback DLL is not a PE"
-                    else:
-                        ver_str = _fmt_ver(ver)
-                        source_label = f"fallback: recol {recol_base}"
-                        _write_runtime_manifest_entry(
-                            dest.name, _sha256(blob),  # type: ignore[arg-type]
-                            ver_str, source_label)
-                        # Unlike download_latest()'s primary path, this
-                        # branch used to stop at the flat "current" file ,
-                        # never writing libraries/versions/<dll>/<ver>.dll.
-                        # A DLL fetched only through this fallback (bundle
-                        # empty, source=bundled) was then invisible to the
-                        # picker's versions/ scan and silently swallowed by
-                        # list_cached_dlls()'s "already seen this name"
-                        # dedup against the legacy flat-file fallback ,
-                        # i.e. it never showed up as selectable at all.
-                        vdir = _versions_dir(KNOWN[dll_name].canonical)
-                        vdir.mkdir(parents=True, exist_ok=True)
-                        try:
-                            (vdir / f"{ver_str}.dll").write_bytes(blob)  # type: ignore[arg-type]
-                        except OSError:
-                            pass
-                        ok, payload = True, dest
-                except OSError as e:
-                    ok, payload = False, f"write failed: {e}"
-            else:
-                ok, payload = False, blob
-
         if ok:
             out[dll_name] = (True, f"OK , {Path(payload).name}")  # type: ignore[arg-type]
             if progress:
-                progress(f"[ok]       {dll_name}  →  {Path(payload).name}")  # type: ignore[arg-type]
+                src = _SOURCE_USED.get(KNOWN[dll_name].canonical, "")
+                progress(f"[ok]       {dll_name}  →  {Path(payload).name}"  # type: ignore[arg-type]
+                         + (f"  ({src})" if src else ""))
+        elif KNOWN[dll_name].optional:
+            # NVIDIA hasn't published these; not having them is not an error.
+            out[dll_name] = (True, f"skipped , {payload}")
+            if progress:
+                progress(f"[skip]     {dll_name}: {payload}")
         else:
             out[dll_name] = (False, str(payload))
             if progress:
@@ -1646,8 +1825,7 @@ def refresh_manifest() -> dict[str, str]:
             continue
         ver = _parse_ver(entry.get("version", "")) if isinstance(entry, dict) else None
         if ver:
-            KNOWN[fname.lower()] = DllSpec(
-                spec.canonical, spec.family, ver, spec.pretty, spec.via)
+            KNOWN[fname.lower()] = replace(spec, latest=ver)
             refreshed[fname] = _fmt_ver(ver)
 
     # 2) NVIDIA Streamline , read tag_name as a version string when possible.
@@ -1659,9 +1837,10 @@ def refresh_manifest() -> dict[str, str]:
             ver = _parse_ver(tag)
             if ver:
                 for fname, spec in list(KNOWN.items()):
-                    if spec.via == "nvidia-streamline-github":
-                        KNOWN[fname] = DllSpec(
-                            spec.canonical, spec.family, ver, spec.pretty, spec.via)
+                    # sl.* only: nvngx_deepdvc.dll rides in the same zip but
+                    # lives in the 310.x namespace, not the 2.x one.
+                    if spec.via == "nvidia-streamline-github" and fname.startswith("sl."):
+                        KNOWN[fname] = replace(spec, latest=ver)
                         refreshed[fname] = _fmt_ver(ver)
         except json.JSONDecodeError:
             pass

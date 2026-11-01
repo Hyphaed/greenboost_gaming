@@ -75,7 +75,7 @@ export function Dlss5FilesModal({
         <div style={{
           padding: "14px 20px", borderBottom: "1px solid #2a2a2a",
         }}>
-          <span style={{ fontWeight: 600, fontSize: 14, color: "#e6e6e6" }}>
+          <span style={{ fontWeight: 600, fontSize: 14, color: "var(--color-text)" }}>
             Files needed for DLSS 5 (Neural Rendering)
           </span>
         </div>
@@ -87,12 +87,12 @@ export function Dlss5FilesModal({
         </div>
 
         <div style={{
-          margin: "10px 20px 4px", padding: "8px 10px", fontSize: 11, color: "#8a9ab0",
+          margin: "10px 20px 4px", padding: "8px 10px", fontSize: 12, color: "var(--color-text-muted)",
           background: "#111", border: "1px solid #2a2a2a", borderRadius: 6, wordBreak: "break-all",
           display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
         }}>
           <span style={{ wordBreak: "break-all" }}>{assets?.asset_dir ?? "…"}</span>
-          <button className="btn-revert" style={{ flexShrink: 0, padding: "3px 8px", fontSize: 11 }}
+          <button className="btn-revert" style={{ flexShrink: 0, padding: "3px 8px", fontSize: 12 }}
                   onClick={() => setBrowsing(true)}>
             Select DLSS5 folder
           </button>
@@ -100,10 +100,10 @@ export function Dlss5FilesModal({
 
         <div style={{ flex: 1, overflowY: "auto", minHeight: 200, maxHeight: "44vh", padding: "0 20px" }}>
           {error && (
-            <p style={{ fontSize: 12, color: "#e05252" }}>{error}</p>
+            <p style={{ fontSize: 12, color: "var(--color-text-error)" }}>{error}</p>
           )}
           {!error && !assets && (
-            <p style={{ fontSize: 12, color: "#8a9ab0" }}>Loading…</p>
+            <p style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Loading…</p>
           )}
           {assets?.files.map(f => (
             <div key={f.name} style={{
@@ -118,10 +118,10 @@ export function Dlss5FilesModal({
               </span>
               <code style={{ color: f.present ? "#e6e6e6" : "#9a9ab0" }}>{f.name}</code>
               {f.required && !f.present && (
-                <span style={{ fontSize: 10, color: "#e05252", marginLeft: "auto" }}>required</span>
+                <span style={{ fontSize: 12, color: "var(--color-text-error)", marginLeft: "auto" }}>required</span>
               )}
               {!f.required && (
-                <span style={{ fontSize: 10, color: "#8a9ab0", marginLeft: "auto" }}>
+                <span style={{ fontSize: 12, color: "var(--color-text-muted)", marginLeft: "auto" }}>
                   optional , used if present
                 </span>
               )}
@@ -130,7 +130,7 @@ export function Dlss5FilesModal({
         </div>
 
         {requiredMissing.length > 0 && assets && (
-          <p style={{ fontSize: 11, color: "#e05252", padding: "8px 20px 0" }}>
+          <p style={{ fontSize: 12, color: "var(--color-text-error)", padding: "8px 20px 0" }}>
             Missing: {requiredMissing.map(f => f.name).join(", ")}
           </p>
         )}

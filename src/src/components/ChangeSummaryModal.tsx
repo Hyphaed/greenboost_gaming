@@ -46,20 +46,20 @@ export function ChangeSummaryModal({
         }}
       >
         <div style={{ padding: "16px 20px 12px", borderBottom: "1px solid #2a2a2a" }}>
-          <div style={{ fontSize: 15, fontWeight: 600, color: "#e6e6e6" }}>{title}</div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--color-text)" }}>{title}</div>
           {subtitle && (
-            <div style={{ fontSize: 12, color: "#76b900", marginTop: 4 }}>{subtitle}</div>
+            <div style={{ fontSize: 12, color: "var(--color-gb)", marginTop: 4 }}>{subtitle}</div>
           )}
         </div>
 
         <div style={{ padding: "14px 20px", overflowY: "auto", flex: 1 }}>
           {changes.length === 0 ? (
-            <p style={{ fontSize: 13, color: "#9a9a9a", margin: 0, lineHeight: 1.6 }}>
+            <p style={{ fontSize: 13, color: "var(--color-text-dim)", margin: 0, lineHeight: 1.6 }}>
               {unchangedMessage ?? "Everything was already at its recommended value , nothing changed."}
             </p>
           ) : (
             <>
-              <div style={{ fontSize: 11, color: "#8a9ab0", textTransform: "uppercase",
+              <div style={{ fontSize: 12, color: "var(--color-text-muted)", textTransform: "uppercase",
                             letterSpacing: "0.04em", marginBottom: 8 }}>
                 {changes.length} setting{changes.length === 1 ? "" : "s"} changed
               </div>
@@ -67,11 +67,11 @@ export function ChangeSummaryModal({
                 <tbody>
                   {changes.map(c => (
                     <tr key={c.label} style={{ borderBottom: "1px solid #262626" }}>
-                      <td style={{ padding: "7px 8px 7px 0", color: "#e6e6e6" }}>{c.label}</td>
-                      <td style={{ padding: "7px 8px", color: "#6b7280", textAlign: "right",
+                      <td style={{ padding: "7px 8px 7px 0", color: "var(--color-text)" }}>{c.label}</td>
+                      <td style={{ padding: "7px 8px", color: "var(--color-text-muted)", textAlign: "right",
                                    whiteSpace: "nowrap" }}>{c.from}</td>
-                      <td style={{ padding: "7px 6px", color: "#6b7280" }}>→</td>
-                      <td style={{ padding: "7px 0", color: "#76b900", fontWeight: 600,
+                      <td style={{ padding: "7px 6px", color: "var(--color-text-muted)" }}>→</td>
+                      <td style={{ padding: "7px 0", color: "var(--color-gb)", fontWeight: 600,
                                    whiteSpace: "nowrap" }}>{c.to}</td>
                     </tr>
                   ))}
@@ -82,7 +82,7 @@ export function ChangeSummaryModal({
 
           {notes && notes.length > 0 && (
             <div style={{ marginTop: 16 }}>
-              <div style={{ fontSize: 11, color: "#8a9ab0", textTransform: "uppercase",
+              <div style={{ fontSize: 12, color: "var(--color-text-muted)", textTransform: "uppercase",
                             letterSpacing: "0.04em", marginBottom: 6 }}>
                 Why these values
               </div>

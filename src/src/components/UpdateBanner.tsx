@@ -32,20 +32,20 @@ function ComponentRow({ c, onUpgrade }: {
   // It sits ABOVE "Up to date" because a machine running a different build
   // than the one installed is not, in any useful sense, up to date.
   const state: { text: string; color: string } =
-    c.error            ? { text: "Couldn't check", color: "#e8a000" }
-  : c.not_installed    ? { text: "Not installed",  color: "#8a9ab0" }
-  : c.update_available ? { text: `Update available: ${c.latest}`, color: "#76b900" }
-  : c.reload_needed    ? { text: `Installed, not yet running , module is ${c.loaded}`, color: "#e8a000" }
-  : c.latest == null   ? { text: "No releases published", color: "#8a9ab0" }
-  : c.installed == null? { text: `Latest is ${c.latest} , installed version unknown`, color: "#8a9ab0" }
-  :                      { text: "Up to date", color: "#8a9ab0" };
+    c.error            ? { text: "Couldn't check", color: "var(--color-amber)" }
+  : c.not_installed    ? { text: "Not installed",  color: "var(--color-text-muted)" }
+  : c.update_available ? { text: `Update available: ${c.latest}`, color: "var(--color-gb)" }
+  : c.reload_needed    ? { text: `Installed, not yet running , module is ${c.loaded}`, color: "var(--color-amber)" }
+  : c.latest == null   ? { text: "No releases published", color: "var(--color-text-muted)" }
+  : c.installed == null? { text: `Latest is ${c.latest} , installed version unknown`, color: "var(--color-text-muted)" }
+  :                      { text: "Up to date", color: "var(--color-text-muted)" };
 
   return (
     <div className="info-row">
       <div className="info-label">
         {c.name}
         {c.installed && (
-          <span style={{ color: "#6b7280", fontWeight: 400 }}> , installed {c.installed}</span>
+          <span style={{ color: "var(--color-text-muted)", fontWeight: 400 }}> , installed {c.installed}</span>
         )}
       </div>
       <div className="info-value" style={{ color: state.color, textAlign: "right" }}>
@@ -58,12 +58,12 @@ function ComponentRow({ c, onUpgrade }: {
               release notes
             </a>
             {c.released_at && (
-              <span style={{ color: "#6b7280", fontSize: 11 }}> ({relDate(c.released_at)})</span>
+              <span style={{ color: "var(--color-text-muted)", fontSize: 12 }}> ({relDate(c.released_at)})</span>
             )}
           </>
         )}
         {c.error && (
-          <div style={{ fontSize: 11, color: "#6b7280", fontWeight: 400 }}>{c.error}</div>
+          <div style={{ fontSize: 12, color: "var(--color-text-muted)", fontWeight: 400 }}>{c.error}</div>
         )}
         {/* The whole point of noticing an update is being able to take it.
             Offer the action here, next to the finding, rather than telling
@@ -120,7 +120,7 @@ export function UpdateBanner({ compact = false, onUpgrade }: {
             <ComponentRow c={report.core} onUpgrade={onUpgrade} />
 
             {report.advice && (
-              <p style={{ fontSize: 12.5, color: "#e6e6e6", lineHeight: 1.6,
+              <p style={{ fontSize: 12.5, color: "var(--color-text)", lineHeight: 1.6,
                           margin: "10px 0 0", display: "flex", gap: 8 }}>
                 <span style={{ color: hasAnyUpdate(report) ? "#76b900" : "#e8a000",
                                flexShrink: 0 }}><Icon.AlertCircle /></span>
@@ -130,11 +130,11 @@ export function UpdateBanner({ compact = false, onUpgrade }: {
 
             {!compact && (
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14 }}>
-                <button className="btn-optimize" disabled={checking}
+                <button className="btn-optimize btn-quiet" disabled={checking}
                         onClick={() => checkForUpdates(true)}>
                   {checking ? "Checking…" : "Check now"}
                 </button>
-                <span style={{ fontSize: 11, color: "#6b7280" }}>
+                <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
                   {report.checked_at
                     ? `Last checked ${new Date(report.checked_at * 1000).toLocaleString()}`
                       + (report.from_cache ? " (cached)" : "")
@@ -144,9 +144,14 @@ export function UpdateBanner({ compact = false, onUpgrade }: {
             )}
           </>
         ) : (
-          <p style={{ fontSize: 13, color: "#9a9a9a", margin: 0 }}>
-            {checking ? "Checking for updates…" : "Update status unavailable."}
-          </p>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <p style={{ fontSize: 13, color: "var(--color-text-dim)", margin: 0 }}>
+              {checking ? "Checking for updates…" : "Could not reach the update server. Your install is unchanged."}
+            </p>
+            {!checking && !compact && (
+              <button className="btn-optimize btn-quiet" onClick={() => checkForUpdates(true)}>Check again</button>
+            )}
+          </div>
         )}
       </div>
     </>

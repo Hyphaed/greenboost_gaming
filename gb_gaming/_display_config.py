@@ -279,6 +279,17 @@ def cmd_apply_mode(connector: str, resolution: str, rate: float) -> int:
         if not _matches(conn, connector):
             continue
         modes_v = mon.get_child_value(1)
+        # Variable refresh rate is a property of the mode (mutter lists a
+        # "+vrr" twin of each mode). Applying always picked the FIXED twin, so
+        # pressing Apply silently switched VRR off. Keep whichever kind the
+        # monitor is using now: if it is on a variable mode, choose the
+        # variable twin of the requested mode when there is one.
+        currently_variable = False
+        for mdi in range(modes_v.n_children()):
+            p0 = _props_dict(modes_v.get_child_value(mdi).get_child_value(6))
+            if p0.get("is-current") and (p0.get("refresh-rate-mode") or "fixed") == "variable":
+                currently_variable = True
+        fixed_id = variable_id = None
         for mdi in range(modes_v.n_children()):
             mode = modes_v.get_child_value(mdi)
             mode_id = mode.get_child_value(0).get_string()
@@ -287,9 +298,12 @@ def cmd_apply_mode(connector: str, resolution: str, rate: float) -> int:
             r       = mode.get_child_value(3).get_double()
             props   = _props_dict(mode.get_child_value(6))
             rrm     = props.get("refresh-rate-mode") or "fixed"
-            if w == target_w and h == target_h and abs(r - rate) < 0.5 and rrm == "fixed":
-                new_mode_id = mode_id
-                break
+            if w == target_w and h == target_h and abs(r - rate) < 0.5:
+                if rrm == "fixed" and fixed_id is None:
+                    fixed_id = mode_id
+                elif rrm == "variable" and variable_id is None:
+                    variable_id = mode_id
+        new_mode_id = (variable_id if currently_variable and variable_id else fixed_id)
         if new_mode_id:
             break
     else:

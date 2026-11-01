@@ -19,15 +19,15 @@ const DLL_META: Record<string, { label: string; type: string; repo: string }> = 
   "nvngx_dlssg.dll":  { label: "nvngx_dlssg.dll",  type: "DLSS Frame Generation",   repo: "NVIDIA/DLSS" },
   "nvngx_dlssd.dll":  { label: "nvngx_dlssd.dll",  type: "DLSS Ray Reconstruction", repo: "NVIDIA/DLSS" },
   "nvngx_dlssnr.dll": { label: "nvngx_dlssnr.dll", type: "DLSS Neural Rendering",   repo: "NVIDIA/DLSS (unreleased)" },
-  "sl.dlss.dll":      { label: "sl.dlss.dll",      type: "Streamline DLSS SR",      repo: "NVIDIAGameWorks/Streamline" },
-  "sl.dlss_g.dll":    { label: "sl.dlss_g.dll",    type: "Streamline DLSS FG",      repo: "NVIDIAGameWorks/Streamline" },
-  "sl.dlss_d.dll":    { label: "sl.dlss_d.dll",    type: "Streamline DLSS RR",      repo: "NVIDIAGameWorks/Streamline" },
-  "sl.dlss_nr.dll":   { label: "sl.dlss_nr.dll",   type: "Streamline DLSS NR",      repo: "NVIDIAGameWorks/Streamline (unreleased)" },
-  "sl.reflex.dll":    { label: "sl.reflex.dll",    type: "Streamline Reflex",       repo: "NVIDIAGameWorks/Streamline" },
-  "sl.common.dll":    { label: "sl.common.dll",    type: "Streamline Core",         repo: "NVIDIAGameWorks/Streamline" },
-  "sl.interposer.dll":{ label: "sl.interposer.dll",type: "Streamline Interposer",   repo: "NVIDIAGameWorks/Streamline" },
-  "sl.nis.dll":       { label: "sl.nis.dll",       type: "Streamline NIS",          repo: "NVIDIAGameWorks/Streamline" },
-  "sl.pcl.dll":       { label: "sl.pcl.dll",       type: "Streamline PCL",          repo: "NVIDIAGameWorks/Streamline" },
+  "sl.dlss.dll":      { label: "sl.dlss.dll",      type: "DLSS Super Resolution (Streamline)",      repo: "NVIDIAGameWorks/Streamline" },
+  "sl.dlss_g.dll":    { label: "sl.dlss_g.dll",    type: "DLSS Frame Generation (Streamline)",      repo: "NVIDIAGameWorks/Streamline" },
+  "sl.dlss_d.dll":    { label: "sl.dlss_d.dll",    type: "DLSS Ray Reconstruction (Streamline)",      repo: "NVIDIAGameWorks/Streamline" },
+  "sl.dlss_nr.dll":   { label: "sl.dlss_nr.dll",   type: "DLSS Neural Rendering (Streamline)",      repo: "NVIDIAGameWorks/Streamline (unreleased)" },
+  "sl.reflex.dll":    { label: "sl.reflex.dll",    type: "Reflex low latency (Streamline)",       repo: "NVIDIAGameWorks/Streamline" },
+  "sl.common.dll":    { label: "sl.common.dll",    type: "Streamline loader",         repo: "NVIDIAGameWorks/Streamline" },
+  "sl.interposer.dll":{ label: "sl.interposer.dll",type: "Streamline interposer",   repo: "NVIDIAGameWorks/Streamline" },
+  "sl.nis.dll":       { label: "sl.nis.dll",       type: "Image Scaling (Streamline)",          repo: "NVIDIAGameWorks/Streamline" },
+  "sl.pcl.dll":       { label: "sl.pcl.dll",       type: "PC latency (Streamline)",          repo: "NVIDIAGameWorks/Streamline" },
 };
 
 const DLL_ORDER = [
@@ -121,10 +121,10 @@ export function AboutView() {
             <>
               <p className="section-title">About GreenBoost Gaming Suite</p>
               <div className="section-card">
-                <p style={{ fontSize: 13, color: "#e6e6e6", lineHeight: 1.7, margin: "0 0 6px" }}>
-                  Version {suiteVersion || "…"} , GreenBoost Gaming Suite
+                <p style={{ fontSize: 13, color: "var(--color-text)", lineHeight: 1.7, margin: "0 0 6px" }}>
+                  <b>GreenBoost Gaming Suite</b> {suiteVersion ? `version ${suiteVersion}` : ""}
                 </p>
-                <p style={{ fontSize: 13, color: "#9a9a9a", lineHeight: 1.7, margin: "0 0 12px" }}>
+                <p style={{ fontSize: 13, color: "var(--color-text-dim)", lineHeight: 1.7, margin: "0 0 12px" }}>
                   Copyright 2026 Ferran Duarri.
                   Released under the GNU General Public License v2.
                 </p>
@@ -135,11 +135,7 @@ export function AboutView() {
                     target="_blank"
                     rel="noopener noreferrer"
                   >
-                    <img
-                      src="https://img.shields.io/badge/Sponsor_this_project-EA4AAA?style=for-the-badge&logo=github-sponsors&logoColor=white"
-                      alt="Sponsor this project"
-                      style={{ height: 28 }}
-                    />
+                    <span className="btn-component">Sponsor this project on GitHub</span>
                   </a>
                 </div>
               </div>
@@ -171,7 +167,7 @@ export function AboutView() {
                 DLSS DLL provenance
               </p>
               <div className="section-card">
-                <p style={{ fontSize: 13, color: "#9a9a9a", lineHeight: 1.7, margin: 0 }}>
+                <p style={{ fontSize: 13, color: "var(--color-text-dim)", lineHeight: 1.7, margin: 0 }}>
                   Streamline DLLs (<code>sl.*.dll</code>) are downloaded from{" "}
                   <b>NVIDIAGameWorks/Streamline</b> on GitHub.
                   DLSS DLLs (<code>nvngx_*.dll</code>) are downloaded from{" "}
@@ -190,12 +186,14 @@ export function AboutView() {
               <p className="section-title">Performance</p>
               <div className="section-card">
                 <div className="toggle-row" onClick={togglePerf}
+                     role="switch" aria-checked={perfMode} tabIndex={0}
+                     onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); togglePerf(); } }}
                      style={{ cursor: "pointer" }}>
                   <div>
-                    <div className="toggle-label">Performance Mode</div>
+                    <div className="toggle-label">Performance mode</div>
                     <div className="toggle-desc">
-                      Sets CPU governor to performance and GPU power mode
-                      to maximum
+                      Keeps the CPU and GPU at full speed. Uses more power and
+                      runs warmer. Asks for your password.
                     </div>
                   </div>
                   <div className={`toggle${perfMode ? " on" : ""}`}>
@@ -204,19 +202,19 @@ export function AboutView() {
                   </div>
                 </div>
                 {perfMsg && (
-                  <p style={{ fontSize: 11, color: "#8a9ab0", margin: "10px 0 0" }}>
+                  <p style={{ fontSize: 12, color: "var(--color-text-muted)", margin: "10px 0 0" }}>
                     {perfMsg}
                   </p>
                 )}
               </div>
 
               <p className="section-title" style={{ marginTop: 24 }}>
-                DLSS Libraries
+                Downloaded DLSS libraries
               </p>
 
               <div className="section-card" style={{ padding: 0, overflow: "hidden" }}>
                 {dlssMsg && (
-                  <p style={{ fontSize: 12, color: "#e05252",
+                  <p style={{ fontSize: 12, color: "var(--color-text-error)",
                                padding: "10px 16px", margin: 0 }}>
                     {dlssMsg}
                   </p>
@@ -224,7 +222,7 @@ export function AboutView() {
 
                 <table style={{
                   width: "100%", borderCollapse: "collapse",
-                  fontSize: 12, color: "#e6e6e6",
+                  fontSize: 12, color: "var(--color-text)",
                 }}>
                   <thead>
                     <tr style={{ background: "#141414" }}>
@@ -235,27 +233,27 @@ export function AboutView() {
                     </tr>
                   </thead>
                   <tbody>
-                    {DLL_ORDER.map((name, i) => {
+                    {DLL_ORDER.filter(n => dlssLoading || dllByName(n)).map((name, i) => {
                       const meta = DLL_META[name];
                       const dll  = dllByName(name);
                       return (
                         <tr key={name}
                             style={{ borderTop: i > 0 ? "1px solid #222" : undefined }}>
                           <td style={tdStyle}>
-                            <code style={{ fontSize: 11 }}>{meta.label}</code>
+                            <code style={{ fontSize: 12 }}>{meta.label}</code>
                           </td>
-                          <td style={{ ...tdStyle, color: "#9a9a9a" }}>
+                          <td style={{ ...tdStyle, color: "var(--color-text-dim)" }}>
                             {meta.type}
                           </td>
-                          <td style={{ ...tdStyle, color: "#5a7a9a", fontSize: 11 }}>
+                          <td style={{ ...tdStyle, color: "#5a7a9a", fontSize: 12 }}>
                             {meta.repo}
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right", fontFamily: "monospace" }}>
                             {dlssLoading
-                              ? <span style={{ color: "#8a9ab0" }}>…</span>
+                              ? <span style={{ color: "var(--color-text-muted)" }}>…</span>
                               : dll
-                                ? <span style={{ color: "#76b900" }}>{dll.version}</span>
-                                : <span style={{ color: "#8a9ab0" }}>not cached</span>
+                                ? <span style={{ color: "var(--color-gb)" }}>{dll.version}</span>
+                                : <span style={{ color: "var(--color-text-muted)" }}>not cached</span>
                             }
                           </td>
                         </tr>
@@ -267,11 +265,17 @@ export function AboutView() {
                 <div style={{
                   padding: "10px 16px",
                   borderTop: "1px solid #1e1e1e",
-                  fontSize: 11, color: "#8a9ab0",
+                  fontSize: 12, color: "var(--color-text-muted)",
                 }}>
+                  {!dlssLoading && DLL_ORDER.some(n => !dllByName(n)) && (
+                    <p style={{ margin: "0 0 8px", color: "#dde1e8" }}>
+                      {DLL_ORDER.filter(n => !dllByName(n)).length} of {DLL_ORDER.length} libraries are not downloaded yet:{" "}
+                      {DLL_ORDER.filter(n => !dllByName(n)).map(n => DLL_META[n].label).join(", ")}.
+                    </p>
+                  )}
                   Versions shown are from the local cache (
                   <code>~/.local/share/greenboost-gaming/libraries/</code>).
-                  Use <b>Upgrade</b> in This Game to fetch newest releases
+                  Use <b>Fetch Latest</b> in Games, All Games, Downloaded DLSS libraries to get the newest releases
                   from NVIDIA's official GitHub repositories.
                 </div>
               </div>
@@ -289,10 +293,9 @@ const thStyle: React.CSSProperties = {
   padding: "8px 16px",
   textAlign: "left",
   fontWeight: 600,
-  fontSize: 11,
-  color: "#8a9ab0",
-  textTransform: "uppercase",
-  letterSpacing: "0.04em",
+  fontSize: 12,
+  color: "var(--color-text-muted)",
+  
 };
 
 const tdStyle: React.CSSProperties = {

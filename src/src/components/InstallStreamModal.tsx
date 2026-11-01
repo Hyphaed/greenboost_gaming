@@ -73,10 +73,10 @@ export function InstallStreamModal({
           padding: "14px 20px", borderBottom: "1px solid #2a2a2a",
           display: "flex", alignItems: "center", gap: 10,
         }}>
-          <span style={{ fontWeight: 600, fontSize: 14, color: "#e6e6e6" }}>
+          <span style={{ fontWeight: 600, fontSize: 14, color: "var(--color-text)" }}>
             {title}
           </span>
-          <span style={{ marginLeft: "auto", fontSize: 11,
+          <span style={{ marginLeft: "auto", fontSize: 12,
                           color: phase === "done"   ? "#76b900"
                                : phase === "failed" ? "#e05252"
                                : phase === "running"? "#e8a000"
@@ -90,10 +90,10 @@ export function InstallStreamModal({
 
         {phase === "confirm" && (
           <div style={{ padding: "20px 20px 10px", fontSize: 13,
-                        color: "#e6e6e6", lineHeight: 1.55 }}>
+                        color: "var(--color-text)", lineHeight: 1.55 }}>
             {confirm ?? "Are you sure?"}
             {destructive && (
-              <p style={{ marginTop: 12, fontSize: 12, color: "#e05252" }}>
+              <p style={{ marginTop: 12, fontSize: 12, color: "var(--color-text-error)" }}>
                 This action will remove files from your system.
               </p>
             )}
@@ -110,7 +110,7 @@ export function InstallStreamModal({
             minHeight: 240, maxHeight: "60vh",
           }}>
             {lines.length === 0
-              ? <span style={{ color: "#8a9ab0" }}>Starting…</span>
+              ? <span style={{ color: "var(--color-text-muted)" }}>Starting…</span>
               : lines.map((line, i) => (
                   <span key={i} style={{ color: lineColor(line), display: "block" }}>
                     {line}
@@ -129,7 +129,7 @@ export function InstallStreamModal({
                 Cancel
               </button>
               <button className="btn-component"
-                      style={{ borderColor: "#e05252", color: "#e05252" }}
+                      style={{ borderColor: "var(--color-red)", color: "var(--color-text-error)" }}
                       onClick={start}>
                 {destructive ? "Uninstall" : "Continue"}
               </button>
@@ -142,7 +142,7 @@ export function InstallStreamModal({
           )}
           {phase === "running" && cancelConfirm && (
             <>
-              <span style={{ fontSize: 12, color: "#9a9a9a",
+              <span style={{ fontSize: 12, color: "var(--color-text-dim)",
                              alignSelf: "center", marginRight: 8 }}>
                 Cancel the sync?
               </span>
@@ -151,7 +151,7 @@ export function InstallStreamModal({
                 No, continue
               </button>
               <button className="btn-component"
-                      style={{ borderColor: "#e05252", color: "#e05252" }}
+                      style={{ borderColor: "var(--color-red)", color: "var(--color-text-error)" }}
                       onClick={() => onDone(false)}>
                 Yes, cancel
               </button>

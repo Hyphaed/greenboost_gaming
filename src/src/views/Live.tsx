@@ -174,7 +174,7 @@ function Sparkline({ series, color = "#22d3ee" }: { series: number[]; color?: st
       <svg width="100%" height={SPARK_H} viewBox={`0 0 ${SPARK_W} ${SPARK_H}`}
            preserveAspectRatio="none" style={{ display: "block" }}>
         <text x={SPARK_W / 2} y={SPARK_H / 2 + 5} textAnchor="middle"
-          fill="#4b5563" fontSize={12}>waiting for data…</text>
+          fill="#8a9ab0" fontSize={12}>Waiting for data…</text>
       </svg>
     );
   }
@@ -209,9 +209,9 @@ function TierRow({ label, pct, color, value, warn }: {
 }) {
   return (
     <div style={{ marginBottom: 8 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3, fontSize: 11 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3, fontSize: 12 }}>
         <span style={{ color: warn ? color : "#9ca3af" }}>{label}</span>
-        <span style={{ color: warn ? color : "#6b7280", fontVariantNumeric: "tabular-nums" }}>{value}</span>
+        <span style={{ color: warn ? color : "var(--color-text-muted)", fontVariantNumeric: "tabular-nums" }}>{value}</span>
       </div>
       <div style={{ height: 5, borderRadius: 3, background: "#1f2937", overflow: "hidden" }}>
         <div style={{
@@ -236,24 +236,24 @@ function MemoryTierBar({ t1Used, t1Total, t2, t3 }: {
 
   return (
     <div className="card" style={{ padding: "12px 16px" }}>
-      <div style={{ fontSize: 11, fontWeight: 600, color: "#6b7280",
+      <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)",
         textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
         Memory Tiers
       </div>
       <TierRow label="T1 VRAM" pct={t1Pct} color={t1Warn ? "#f87171" : "#22d3ee"}
-        value={t1Used != null && t1Total != null ? `${fmt(t1Used)} / ${fmt(t1Total)}` : ","}
+        value={t1Used != null && t1Total != null ? `${fmt(t1Used)} / ${fmt(t1Total)}` : "n/a"}
         warn={t1Warn} />
       <TierRow label="T2 DDR spill" pct={t2Pct} color="#fbbf24"
-        value={t2 > 0 ? fmt(t2) : ","} warn={t2 > 0} />
+        value={t2 > 0 ? fmt(t2) : "n/a"} warn={t2 > 0} />
       <TierRow label="T3 NVMe spill" pct={t3Pct} color="#f87171"
-        value={t3 > 0 ? fmt(t3) : ","} warn={t3 > 0} />
+        value={t3 > 0 ? fmt(t3) : "n/a"} warn={t3 > 0} />
       {t3 > 0 && (
-        <div style={{ fontSize: 10, color: "#f87171", marginTop: 4, lineHeight: 1.4 }}>
+        <div style={{ fontSize: 12, color: "#f87171", marginTop: 4, lineHeight: 1.4 }}>
           NVMe spill detected , severe performance impact. Reduce texture quality.
         </div>
       )}
       {t2 > 0 && t3 === 0 && (
-        <div style={{ fontSize: 10, color: "#fbbf24", marginTop: 4, lineHeight: 1.4 }}>
+        <div style={{ fontSize: 12, color: "#fbbf24", marginTop: 4, lineHeight: 1.4 }}>
           DDR spill active , consider lowering VRAM-heavy settings.
         </div>
       )}
@@ -285,12 +285,12 @@ function PoolBriefGauge({ brief }: { brief: PoolBrief | null }) {
   return (
     <div className="card" style={{ padding: "12px 16px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <span style={{ fontSize: 11, fontWeight: 600, color: "#6b7280",
+        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)",
           textTransform: "uppercase", letterSpacing: "0.05em" }}>
           Live Pool State (system-wide)
         </span>
         {brief && (
-          <span style={{ fontSize: 10, color: pressureBad ? "#f87171" : "#22c55e",
+          <span style={{ fontSize: 12, color: pressureBad ? "#f87171" : "#22c55e",
             fontWeight: 600, textTransform: "uppercase" }}
             title="T3 (NVMe swap) pressure , not T2's">
             T3 {brief.t3_pressure}
@@ -298,7 +298,7 @@ function PoolBriefGauge({ brief }: { brief: PoolBrief | null }) {
         )}
       </div>
       {brief == null ? (
-        <div style={{ fontSize: 11, color: "#374151" }}>
+        <div style={{ fontSize: 12, color: "#374151" }}>
           Kernel module not loaded, or pool_brief unavailable.
         </div>
       ) : (
@@ -311,7 +311,7 @@ function PoolBriefGauge({ brief }: { brief: PoolBrief | null }) {
           <TierRow label="T3 NVMe" pct={t3Pct} color="#f87171"
             value={`${fmtMb(t3AllocMb)} / ${fmtGb(brief.t3_max_gb)}`}
             warn={t3AllocMb > 0} />
-          <div style={{ fontSize: 10, color: "#6b7280", marginTop: 4 }}>
+          <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 4 }}>
             KV reserve {brief.kv_reserve_mb} MB · KV in T2 {brief.kv_t2_mb} MB
           </div>
         </>
@@ -336,7 +336,7 @@ function StatRow({ label, value, unit, warn, icon }: {
       </span>
       <span style={{ color: warn ? "#f87171" : "#e5e7eb", fontVariantNumeric: "tabular-nums",
         fontSize: 14, fontWeight: 600 }}>
-        {value}{unit ? <span style={{ color: "#6b7280", fontSize: 11, marginLeft: 3 }}>{unit}</span> : null}
+        {value}{unit ? <span style={{ color: "var(--color-text-muted)", fontSize: 12, marginLeft: 3 }}>{unit}</span> : null}
       </span>
     </div>
   );
@@ -789,24 +789,24 @@ export function LiveView({ onNavigate }: { onNavigate?: (v: ViewType) => void } 
       gap: 16, padding: "0 4px" }}>
 
       {/* top bar */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0, padding: "10px 16px 0" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <div style={{
             width: 10, height: 10, borderRadius: "50%",
             background: hasGame ? "#22c55e" : "#374151",
             boxShadow: hasGame ? "0 0 6px #22c55e" : "none",
           }} />
-          <span style={{ color: hasGame ? "#d1fae5" : "#6b7280", fontSize: 13 }}>
-            {hasGame ? `Game PID ${gamePid}` : "No game detected"}
+          <span style={{ color: hasGame ? "#d1fae5" : "#8a9ab0", fontSize: 13 }}>
+            {hasGame ? `Game running (PID ${gamePid})` : "No game running"}
           </span>
         </div>
 
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           {/* stream status indicator */}
-          <span style={{ fontSize: 11, color: streaming ? "#22c55e" : "#6b7280",
+          <span style={{ fontSize: 12, color: streaming ? "#22c55e" : "#8a9ab0",
                          display: "flex", alignItems: "center", gap: 5 }}>
             <span style={{ width: 6, height: 6, borderRadius: "50%",
-                           background: streaming ? "#22c55e" : "#6b7280",
+                           background: streaming ? "#22c55e" : "#8a9ab0",
                            boxShadow: streaming ? "0 0 5px #22c55e" : "none",
                            display: "inline-block" }} />
             {streaming ? "Live" : "Reconnecting…"}
@@ -818,26 +818,26 @@ export function LiveView({ onNavigate }: { onNavigate?: (v: ViewType) => void } 
               onClick={stopRecording}
               style={{
                 display: "inline-flex", alignItems: "center", gap: 6,
-                padding: "5px 12px", borderRadius: 5, cursor: "pointer",
+                padding: "6px 14px", minHeight: 32, borderRadius: 5, cursor: "pointer",
                 background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.4)",
                 color: "#f87171", fontSize: 12, fontWeight: 600,
               }}
             >
               <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#f87171",
                 animation: "pulse 1s infinite" }} />
-              Stop REC ({recordedCount})
+              Stop recording ({recordedCount})
             </button>
           ) : (
             <button
               onClick={startRecording}
               style={{
                 display: "inline-flex", alignItems: "center", gap: 6,
-                padding: "5px 12px", borderRadius: 5, cursor: "pointer",
+                padding: "6px 14px", minHeight: 32, borderRadius: 5, cursor: "pointer",
                 background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.3)",
                 color: "#f87171", fontSize: 12, fontWeight: 600,
               }}
             >
-              ● Start REC
+              ● Record session
             </button>
           )}
 
@@ -846,7 +846,7 @@ export function LiveView({ onNavigate }: { onNavigate?: (v: ViewType) => void } 
             onClick={exportLogs}
             disabled={!canExport}
             style={{
-              padding: "5px 12px", borderRadius: 5,
+              padding: "6px 14px", minHeight: 32, borderRadius: 5,
               cursor: canExport ? "pointer" : "default",
               background: canExport ? "rgba(99,102,241,0.08)" : "rgba(99,102,241,0.03)",
               border: `1px solid ${canExport ? "rgba(99,102,241,0.3)" : "rgba(99,102,241,0.15)"}`,
@@ -855,7 +855,7 @@ export function LiveView({ onNavigate }: { onNavigate?: (v: ViewType) => void } 
             }}
             title={canExport ? "Export GPU snapshot + session log as .md" : "Waiting for GPU data…"}
           >
-            Export Logs
+            Export report
           </button>
 
           {/* export buttons , shown when there are recorded samples */}
@@ -864,9 +864,9 @@ export function LiveView({ onNavigate }: { onNavigate?: (v: ViewType) => void } 
               <button
                 onClick={exportJson}
                 style={{
-                  padding: "5px 12px", borderRadius: 5, cursor: "pointer",
+                  padding: "6px 14px", minHeight: 32, borderRadius: 5, cursor: "pointer",
                   background: "rgba(118,185,0,0.08)", border: "1px solid rgba(118,185,0,0.3)",
-                  color: "#76b900", fontSize: 12, fontWeight: 600,
+                  color: "var(--color-gb)", fontSize: 12, fontWeight: 600,
                 }}
                 title={`Export ${recordedCount} samples as JSON`}
               >
@@ -875,9 +875,9 @@ export function LiveView({ onNavigate }: { onNavigate?: (v: ViewType) => void } 
               <button
                 onClick={exportCsv}
                 style={{
-                  padding: "5px 12px", borderRadius: 5, cursor: "pointer",
+                  padding: "6px 14px", minHeight: 32, borderRadius: 5, cursor: "pointer",
                   background: "rgba(118,185,0,0.08)", border: "1px solid rgba(118,185,0,0.3)",
-                  color: "#76b900", fontSize: 12, fontWeight: 600,
+                  color: "var(--color-gb)", fontSize: 12, fontWeight: 600,
                 }}
                 title={`Export ${recordedCount} samples as CSV`}
               >
@@ -946,10 +946,10 @@ export function LiveView({ onNavigate }: { onNavigate?: (v: ViewType) => void } 
                 {throttle.reasons.map(r => (
                   <span key={r} style={{
                     background: "rgba(251,146,60,0.18)", color: "#fdba74",
-                    borderRadius: 4, padding: "1px 7px", fontSize: 11.5, fontWeight: 600,
+                    borderRadius: 4, padding: "1px 7px", fontSize: 12.5, fontWeight: 600,
                   }}>{r}</span>
                 ))}
-                <span style={{ color: "#71717a", fontSize: 11.5 }}>
+                <span style={{ color: "#71717a", fontSize: 12.5 }}>
                   {throttle.inferred
                     ? "inferred , driver reports no reason"
                     : "reported by the driver (NVML)"}
@@ -1027,10 +1027,14 @@ export function LiveView({ onNavigate }: { onNavigate?: (v: ViewType) => void } 
                 letterSpacing: "0.05em" }}>FPS (last 60 s)</span>
               <span style={{ color: "#22d3ee", fontVariantNumeric: "tabular-nums",
                 fontWeight: 700, fontSize: 22 }}>
-                {stats.fps > 0 ? stats.fps.toFixed(0) : ","}
+                {stats.fps > 0 ? stats.fps.toFixed(0) : hasGame ? "n/a" : ""}
               </span>
             </div>
-            <Sparkline series={fpsSeries} color="#22d3ee" />
+            {hasGame || fpsSeries.length > 1
+              ? <Sparkline series={fpsSeries} color="#22d3ee" />
+              : <p style={{ margin: "14px 0 0", fontSize: 12, color: "var(--color-text-muted)", lineHeight: 1.5 }}>
+                  No game is running. Start one from Games and its frame rate shows here.
+                </p>}
           </div>
 
           {/* GPU clock sparkline */}
@@ -1041,8 +1045,8 @@ export function LiveView({ onNavigate }: { onNavigate?: (v: ViewType) => void } 
                   letterSpacing: "0.05em" }}>GPU Clock</span>
                 <span style={{ color: "#a78bfa", fontVariantNumeric: "tabular-nums",
                   fontWeight: 700, fontSize: 18 }}>
-                  {gpuMetrics.clock_gpu_mhz ?? ","}
-                  <span style={{ color: "#6b7280", fontSize: 11, marginLeft: 3 }}>MHz</span>
+                  {gpuMetrics.clock_gpu_mhz ?? "n/a"}
+                  <span style={{ color: "var(--color-text-muted)", fontSize: 12, marginLeft: 3 }}>MHz</span>
                 </span>
               </div>
               <Sparkline series={gpuClockSeries} color="#a78bfa" />
@@ -1059,13 +1063,13 @@ export function LiveView({ onNavigate }: { onNavigate?: (v: ViewType) => void } 
                   color: gpuMetrics.power_w != null && gpuMetrics.power_limit_w != null
                     && gpuMetrics.power_w >= gpuMetrics.power_limit_w * 0.97
                     ? "#f97316" : "#fb923c" }}>
-                  {gpuMetrics.power_w?.toFixed(0) ?? ","}
+                  {gpuMetrics.power_w?.toFixed(0) ?? "n/a"}
                   {gpuMetrics.power_limit_w != null && (
-                    <span style={{ color: "#6b7280", fontSize: 13, fontWeight: 400 }}>
+                    <span style={{ color: "var(--color-text-muted)", fontSize: 13, fontWeight: 400 }}>
                       {" / "}{gpuMetrics.power_limit_w.toFixed(0)}
                     </span>
                   )}
-                  <span style={{ color: "#6b7280", fontSize: 11, marginLeft: 3 }}>W</span>
+                  <span style={{ color: "var(--color-text-muted)", fontSize: 12, marginLeft: 3 }}>W</span>
                 </span>
               </div>
               <Sparkline series={gpuPowerSeries} color="#fb923c" />
@@ -1076,8 +1080,8 @@ export function LiveView({ onNavigate }: { onNavigate?: (v: ViewType) => void } 
           <div className="card" style={{ padding: "12px 16px" }}>
             <StatRow label="Frame time (mean)" value={stats.mean_ms.toFixed(1)} unit="ms"
               warn={stats.mean_ms > 33} />
-            <StatRow label="1% Low FPS"  value={stats.p1_fps  > 0 ? stats.p1_fps.toFixed(1)  : ","} />
-            <StatRow label="Worst frame" value={stats.worst_ms > 0 ? stats.worst_ms.toFixed(1) : ","} unit={stats.worst_ms > 0 ? "ms" : undefined}
+            <StatRow label="1% Low FPS"  value={stats.p1_fps  > 0 ? stats.p1_fps.toFixed(1)  : "n/a"} />
+            <StatRow label="Worst frame" value={stats.worst_ms > 0 ? stats.worst_ms.toFixed(1) : "n/a"} unit={stats.worst_ms > 0 ? "ms" : undefined}
               warn={stats.worst_ms > 50} />
             {VULKAN_LAYER_VISIBLE && <StatRow label="Hitches" value={stats.hitches} warn={stats.hitches > 0} />}
             <StatRow label="T2 DDR used" value={stats.t2_mb.toFixed(0)} unit="MB" />
@@ -1093,7 +1097,7 @@ export function LiveView({ onNavigate }: { onNavigate?: (v: ViewType) => void } 
                     marginTop: 4, padding: "5px 8px",
                     background: "rgba(251,191,36,0.1)",
                     border: "1px solid rgba(251,191,36,0.35)",
-                    borderRadius: 4, fontSize: 11, color: "#fbbf24",
+                    borderRadius: 4, fontSize: 12, color: "#fbbf24",
                     lineHeight: 1.5,
                   }}>
                     Shader compilation stutter , gplasync reduces this.
@@ -1119,37 +1123,37 @@ export function LiveView({ onNavigate }: { onNavigate?: (v: ViewType) => void } 
           {/* ── GPU Metrics (NVML) ───────────────────────────────────────────── */}
           {gpuMetrics && (
             <div className="card" style={{ padding: "12px 16px" }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: "#6b7280",
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)",
                             textTransform: "uppercase", letterSpacing: "0.05em",
                             marginBottom: 8 }}>
                 GPU
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 24px" }}>
-                <StatRow label="Temperature"  value={gpuMetrics.temp_c  ?? ","} unit={gpuMetrics.temp_c  != null ? "°C" : undefined}
+                <StatRow label="Temperature"  value={gpuMetrics.temp_c  ?? "n/a"} unit={gpuMetrics.temp_c  != null ? "°C" : undefined}
                          warn={gpuMetrics.temp_c != null && gpuMetrics.temp_c > 85}
                          icon={<Icon.Thermometer />} />
-                <StatRow label="Fan"         value={gpuMetrics.fan_pct  ?? ","} unit={gpuMetrics.fan_pct != null ? "%" : undefined}
+                <StatRow label="Fan"         value={gpuMetrics.fan_pct  ?? "n/a"} unit={gpuMetrics.fan_pct != null ? "%" : undefined}
                          icon={<Icon.Fan />} />
-                <StatRow label="GPU Clock"   value={gpuMetrics.clock_gpu_mhz ?? ","} unit={gpuMetrics.clock_gpu_mhz != null ? "MHz" : undefined}
+                <StatRow label="GPU Clock"   value={gpuMetrics.clock_gpu_mhz ?? "n/a"} unit={gpuMetrics.clock_gpu_mhz != null ? "MHz" : undefined}
                          icon={<Icon.Activity />} />
-                <StatRow label="Mem Clock"   value={gpuMetrics.clock_mem_mhz ?? ","} unit={gpuMetrics.clock_mem_mhz != null ? "MHz" : undefined}
+                <StatRow label="Mem Clock"   value={gpuMetrics.clock_mem_mhz ?? "n/a"} unit={gpuMetrics.clock_mem_mhz != null ? "MHz" : undefined}
                          icon={<Icon.MemChip />} />
-                <StatRow label="GPU Load"    value={gpuMetrics.gpu_util_pct ?? ","} unit={gpuMetrics.gpu_util_pct != null ? "%" : undefined}
+                <StatRow label="GPU Load"    value={gpuMetrics.gpu_util_pct ?? "n/a"} unit={gpuMetrics.gpu_util_pct != null ? "%" : undefined}
                          warn={gpuMetrics.gpu_util_pct != null && gpuMetrics.gpu_util_pct > 95}
                          icon={<Icon.Cpu />} />
-                <StatRow label="VRAM Load"   value={gpuMetrics.mem_util_pct ?? ","} unit={gpuMetrics.mem_util_pct != null ? "%" : undefined}
+                <StatRow label="VRAM activity"   value={gpuMetrics.mem_util_pct ?? "n/a"} unit={gpuMetrics.mem_util_pct != null ? "%" : undefined}
                          icon={<Icon.Layers />} />
                 <StatRow label="Power"
                          value={gpuMetrics.power_w != null
                            ? `${gpuMetrics.power_w.toFixed(0)}${gpuMetrics.power_limit_w != null ? ` / ${gpuMetrics.power_limit_w.toFixed(0)}` : ""}`
-                           : ","}
+                           : "n/a"}
                          unit={gpuMetrics.power_w != null ? "W" : undefined}
                          icon={<Icon.Power />} />
-                <StatRow label="VRAM Used"
+                <StatRow label="VRAM"
                          value={gpuMetrics.vram_used_mb != null
-                           ? `${gpuMetrics.vram_used_mb.toLocaleString()}${gpuMetrics.vram_total_mb != null ? ` / ${gpuMetrics.vram_total_mb.toLocaleString()}` : ""}`
-                           : ","}
-                         unit={gpuMetrics.vram_used_mb != null ? "MB" : undefined}
+                           ? `${(gpuMetrics.vram_used_mb / 1024).toFixed(1)}${gpuMetrics.vram_total_mb != null ? ` / ${(gpuMetrics.vram_total_mb / 1024).toFixed(1)}` : ""}`
+                           : "n/a"}
+                         unit={gpuMetrics.vram_used_mb != null ? "GB" : undefined}
                          icon={<Icon.Package />} />
                 {gpuMetrics.clock_gpu_mhz != null && gpuMetrics.power_w != null && gpuMetrics.power_w > 5 && (
                   <StatRow
@@ -1164,22 +1168,22 @@ export function LiveView({ onNavigate }: { onNavigate?: (v: ViewType) => void } 
 
           {/* ── GreenBoost Activity (dataflux) ──────────────────────────────── */}
           <div className="card" style={{ padding: "12px 16px" }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: "#6b7280",
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)",
                           textTransform: "uppercase", letterSpacing: "0.05em",
                           marginBottom: 8 }}>
               GreenBoost Activity
             </div>
             {dataflux.length === 0 ? (
-              <div style={{ fontSize: 11, color: "#374151" }}>
-                No recent activity , nothing from core GreenBoost, gaming
-                sessions, or tier moves in the last window.
+              <div style={{ fontSize: 12, color: "var(--color-text-muted)", lineHeight: 1.5 }}>
+                Quiet for now. GreenBoost has not moved any memory or started any
+                gaming session recently.
               </div>
             ) : (
               <div className="telemetry-log" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 {dataflux.map((ev, i) => (
                   <div key={i} style={{
                     display: "flex", alignItems: "baseline", gap: 8,
-                    fontSize: 11, color: "#9ca3af",
+                    fontSize: 12, color: "#9ca3af",
                   }}>
                     <span style={{
                       color: "#22d3ee", fontFamily: "monospace",
@@ -1202,7 +1206,7 @@ export function LiveView({ onNavigate }: { onNavigate?: (v: ViewType) => void } 
           display: liveTab === "log" ? "flex" : "none",
           flex: 1, flexDirection: "column", minWidth: 0,
         }}>
-          <div style={{ color: "#6b7280", fontSize: 12, marginBottom: 6,
+          <div style={{ color: "var(--color-text-muted)", fontSize: 12, marginBottom: 6,
             textTransform: "uppercase", letterSpacing: "0.05em", display: "flex", alignItems: "center", gap: 8 }}>
             <span>Layer log , {logs.length} lines</span>
             {streaming && <span style={{ color: "#22c55e" }}>● live</span>}
@@ -1211,8 +1215,8 @@ export function LiveView({ onNavigate }: { onNavigate?: (v: ViewType) => void } 
           <div ref={logsRef} style={{
             flex: 1, overflowY: "auto", background: "#0a0a0a", borderRadius: 6,
             border: "1px solid #1f2937", padding: "8px 10px",
-            fontFamily: "monospace", fontSize: 11, lineHeight: 1.6,
-            color: "#6b7280",
+            fontFamily: "monospace", fontSize: 12, lineHeight: 1.6,
+            color: "var(--color-text-muted)",
           }}>
             {logs.length === 0
               ? <span style={{ color: "#374151" }}>No log lines yet. Start stream and launch a game.</span>
@@ -1222,7 +1226,7 @@ export function LiveView({ onNavigate }: { onNavigate?: (v: ViewType) => void } 
                   const isWarn  = l.includes("WARN") || l.includes("warn");
                   return (
                     <div key={i} style={{
-                      color: isStats ? "#22d3ee" : isErr ? "#f87171" : isWarn ? "#fbbf24" : "#6b7280",
+                      color: isStats ? "#22d3ee" : isErr ? "#f87171" : isWarn ? "#fbbf24" : "#8a9ab0",
                       whiteSpace: "pre-wrap", wordBreak: "break-all",
                     }}>
                       {l}

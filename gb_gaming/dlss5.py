@@ -39,8 +39,11 @@ this project at libraries/dlssnr/runtime/ and is copied per-game from there
 """
 from __future__ import annotations
 
+import hashlib
+import mmap
 import os
 import re
+import struct
 import subprocess
 from pathlib import Path
 
@@ -115,6 +118,109 @@ def list_assets() -> dict:
     return {"asset_dir": str(assets), "files": files}
 
 
+
+# ── Model trust ──────────────────────────────────────────────────────────
+
+def model_trust(nr_dll: Path) -> tuple[bool, str]:
+    """Is this nvngx_dlssnr.dll a build GreenBoost knows is NVIDIA's?
+
+    NVIDIA doesn't publish the file, so the only defensible check is the full
+    SHA-256 against a pinned allowlist (dlss_updater.TRUSTED_SHA256). A valid
+    Authenticode signature proves nothing here: a widely copied patched build
+    carries NVIDIA's signature over different content, and one community
+    mirror's copy has the right size but another hash. Advanced users who
+    knowingly run another build can set GREENBOOST_ALLOW_UNVERIFIED_NR=1.
+    Returns (trusted, human-readable detail)."""
+    from gb_gaming import dlss_updater
+    try:
+        h = hashlib.sha256()
+        with open(nr_dll, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+    except OSError as e:
+        return False, f"could not read {nr_dll}: {e}"
+    digest = h.hexdigest()
+    known = dlss_updater.TRUSTED_SHA256.get("nvngx_dlssnr.dll", {})
+    if digest in known:
+        return True, f"{known[digest]} (sha256 {digest[:12]}…)"
+    if os.environ.get("GREENBOOST_ALLOW_UNVERIFIED_NR") == "1":
+        return True, f"unverified build allowed by GREENBOOST_ALLOW_UNVERIFIED_NR (sha256 {digest[:12]}…)"
+    return False, (f"sha256 {digest[:12]}… is not a build GreenBoost knows is NVIDIA's "
+                   f"(known: {', '.join(d[:12] + '…' for d in known)}); not installed")
+
+
+# ── Is DLSS 5 plausible in this game? ────────────────────────────────────
+
+_ANTICHEAT_MARKERS = ("EasyAntiCheat", "EasyAntiCheat_EOS", "BattlEye", "BEService.exe",
+                      "vgc.exe", "XIGNCODE", "nProtect")
+
+
+def _game_exe(game_dir: Path) -> Path | None:
+    """The biggest .exe that isn't an installer/helper, i.e. the game."""
+    skip = re.compile(r"(crash|helper|launcher|setup|install|redist|webhelper|easyanticheat|unins)", re.I)
+    best, size = None, 0
+    try:
+        for p in game_dir.glob("*.exe"):
+            if not skip.search(p.name) and p.stat().st_size > size:
+                best, size = p, p.stat().st_size
+    except OSError:
+        return None
+    return best
+
+
+def game_capabilities(game_dir: Path) -> list[dict]:
+    """Facts that decide whether DLSS 5 can plausibly work, read from the
+    install before anything is changed. Never says "works": the strongest
+    claim is "plausible", because only a log from a real launch proves it.
+
+    Counts byte strings in the executable (D3D12 / NGX / Streamline), so a
+    game that only mentions them still reads "plausible", and a packed or
+    protected binary (Denuvo) can hide all of it, which is reported as
+    "can't tell"."""
+    out: list[dict] = []
+    exe = _game_exe(game_dir)
+    if exe is None:
+        return [_check("Game executable", False, "warn",
+                       f"no game .exe found in {game_dir}, so DLSS 5 can't be pre-checked")]
+    try:
+        with open(exe, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+            head = mm[:4096]
+            off = struct.unpack_from("<I", head, 0x3C)[0] if len(head) > 0x40 else 0
+            machine = struct.unpack_from("<H", mm[off + 4:off + 6])[0] if off else 0
+
+            def seen(needle: bytes) -> bool:
+                return mm.find(needle) != -1
+            d3d12 = seen(b"d3d12") or seen(b"D3D12")
+            d3d11 = seen(b"d3d11") or seen(b"D3D11")
+            vulkan = seen(b"vulkan-1")
+            ngx = seen(b"nvngx") or seen(b"NGX")
+            streamline = seen(b"sl.interposer") or seen(b"streamline")
+    except (OSError, ValueError, struct.error) as e:
+        return [_check("Game executable", False, "warn", f"could not read {exe.name}: {e}")]
+
+    out.append(_check("64-bit game", machine == 0x8664, "error",
+                      f"{exe.name} is {'x64' if machine == 0x8664 else hex(machine)}"))
+    api = "Direct3D 12" if d3d12 else "Direct3D 11" if d3d11 else "Vulkan" if vulkan else "unknown"
+    out.append(_check("Renderer", d3d12, "warn",
+                      f"{api}. DLSS 5 is proven on Direct3D 12 games; other renderers need extra bridges"
+                      if not d3d12 else "Direct3D 12 (strings in the executable, not yet confirmed at run time)"))
+    if streamline:
+        dlss = "Streamline"
+    elif ngx:
+        dlss = "NGX (no Streamline)"
+    else:
+        dlss = "none found"
+    out.append(_check("Game's own DLSS", ngx or streamline, "warn",
+                      f"{dlss}. The neural pass hooks the game's DLSS session; a game without one needs standalone mode"
+                      if not (ngx or streamline) else f"{dlss}. The pass may be able to hook it; only the log after a real launch confirms that"))
+    found = [m for m in _ANTICHEAT_MARKERS
+             if (game_dir / m).exists() or any(game_dir.glob(f"**/{m}"))][:3] if game_dir.is_dir() else []
+    out.append(_check("Anti-cheat", not found, "warn",
+                      ("found " + ", ".join(found) + ": test offline first, modified game folders can trigger bans")
+                      if found else "no EasyAntiCheat/BattlEye files found. Denuvo and similar can't be detected "
+                                    "from outside, so this isn't a guarantee. Test offline first."))
+    return out
+
 # ── Preflight ────────────────────────────────────────────────────────────
 
 _RTX50_RE = re.compile(r"RTX\s*50\d{2}", re.IGNORECASE)
@@ -134,6 +240,58 @@ def _nvidia_smi_gpu_driver() -> tuple[str, str] | None:
 
 def _check(check: str, ok: bool, level: str, detail: str) -> dict:
     return {"check": check, "ok": ok, "level": level, "detail": detail}
+
+
+# The runtime's own DlssNr.Enabled=true never proved the pass actually ran ,
+# confirmed the hard way, 2026-09-02: a full playtest showed zero
+# DlssNr_Dx12::Dispatch calls and zero CreateFeature/EvaluateFeature calls
+# for any DLSS feature, meaning DLSS Super Resolution itself had never been
+# turned on in the game's own graphics menu that session , the config said
+# "on", nothing was actually running. These two lines
+# (DlssNrFeature_Dx12.cpp, added the same day) are what the runtime logs
+# once, only at the two points that matter , successful NGX feature
+# creation, or a skip/failure reason , specifically so the Suite can report
+# the truth instead of the config value. See FORK_NOTES.md.
+_NR_ON_RE = re.compile(r"GreenBoost DLSS5 Injected: Neural Render ON \(([^)]+)\)")
+_NR_OFF_RE = re.compile(r"GreenBoost DLSS5: Neural Render OFF -- (.+)")
+
+
+def last_session_neural_rendering_status(game_dir: Path) -> dict | None:
+    """Reads GreenBoostDLSS5.log for whichever GreenBoost-branded
+    confirmation line appears LAST (line order in the log is chronological
+    order , a retry-after-failure can flip OFF to ON within one session, so
+    "last" is what matters, not "first" or "any"). Returns None when no log
+    exists yet, which needs LogToFile actually on (the shipped ini template
+    sets this permanently, 2026-09-02) and at least one real launch , never
+    raises, never guesses from the config file alone."""
+    log_path = game_dir / "GreenBoostDLSS5.log"
+    if not log_path.is_file():
+        return None
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+    last_on_detail: str | None = None
+    last_off_detail: str | None = None
+    last_on_line = -1
+    last_off_line = -1
+    for i, line in enumerate(text.splitlines()):
+        m = _NR_ON_RE.search(line)
+        if m:
+            last_on_detail = m.group(1)
+            last_on_line = i
+            continue
+        m = _NR_OFF_RE.search(line)
+        if m:
+            last_off_detail = m.group(1).strip()
+            last_off_line = i
+
+    if last_on_line < 0 and last_off_line < 0:
+        return {"found": False, "active": None, "detail": ""}
+    if last_on_line > last_off_line:
+        return {"found": True, "active": True, "detail": last_on_detail or ""}
+    return {"found": True, "active": False, "detail": last_off_detail or "unknown reason"}
 
 
 def preflight(game_dir: Path, appid: str) -> list[dict]:
@@ -160,10 +318,17 @@ def preflight(game_dir: Path, appid: str) -> list[dict]:
         "nvngx_dlssnr.dll staged", nr_dll.is_file(), "error",
         str(nr_dll) if nr_dll.is_file() else f"missing: {nr_dll}"))
 
+    if nr_dll.is_file():
+        trusted, detail = model_trust(nr_dll)
+        results.append(_check("nvngx_dlssnr.dll is a known NVIDIA build", trusted,
+                              "error" if not trusted else "info", detail))
+
     runtime_ok, runtime_or_msg = runtime.ensure_dlss5_runtime_available()
     results.append(_check(
         "DLSS5 runtime staged", runtime_ok, "error" if not runtime_ok else "info",
         str(runtime_or_msg)))
+
+    results.extend(game_capabilities(game_dir))
 
     proxy = runtime.pick_proxy_dll(game_dir)
     results.append(_check(
@@ -189,26 +354,78 @@ def preflight(game_dir: Path, appid: str) -> list[dict]:
             "none of the panel's settings apply until you turn DLSS 5 off and back on "
             "here to upgrade it"))
 
+    # What actually happened last time you played, not what the config says
+    # should happen , see last_session_neural_rendering_status()'s docstring
+    # for why the distinction is real and hard-won.
+    status = last_session_neural_rendering_status(game_dir)
+    if status is None:
+        results.append(_check(
+            "Last session", False, "warn",
+            "no GreenBoostDLSS5.log yet , launch the game at least once to see "
+            "whether Neural Rendering actually ran"))
+    elif not status["found"]:
+        results.append(_check(
+            "Last session", False, "warn",
+            "a log exists but never mentions Neural Rendering , DLSS 5 may not "
+            "have been enabled yet at that point"))
+    elif status["active"]:
+        results.append(_check(
+            "Last session", True, "info",
+            f"Neural Rendering actually ran , {status['detail']}"))
+    else:
+        results.append(_check(
+            "Last session", False, "warn",
+            f"Neural Rendering did not run , {status['detail']}"))
+
     return results
 
 
 # ── Enable / disable ─────────────────────────────────────────────────────
 
+# Per-game "[Section].Key": "value" overrides applied automatically at
+# enable time, keyed by Steam AppID , same idea as the Proton wrapper's
+# _inject_ue5_rt_disable(), just landing in GreenBoostDLSS5.ini instead of
+# the game's own Engine.ini. Unlike CONFIG_KEYS (user-facing DLSS5 panel
+# controls the user tunes themselves), this table is for known-broken-game
+# compatibility fixes nobody should have to discover by hand.
+#
+# 2909400 (FINAL FANTASY VII REBIRTH): update 1.004 broke the game's own
+# Unreal Engine resource-state reporting for its color target, which the
+# upstream OptiScaler project (github.com/optiscaler/OptiScaler, the base
+# this runtime forks) documents as causing "Xmas artifacts/dark glitches"
+# , https://github.com/optiscaler/OptiScaler/wiki/FINAL-FANTASY-VII-REBIRTH
+# , and fixes with Hotfix.ColorResourceBarrier=4
+# (D3D12_RESOURCE_STATE_RENDER_TARGET) in place of the runtime's default
+# "auto". A second, independent Linux report of the same darkened-image
+# symptom on this game exists at
+# https://github.com/optiscaler/OptiScaler/issues/764. This is a real
+# upstream game/engine bug, not something introduced by GreenBoost's fork ,
+# confirmed here by checking a real FF7 Rebirth session's own
+# GreenBoostDLSS5.log, which shows Neural Rendering never even ran that
+# session (no DLSS Super Resolution was active, only Frame Generation), so
+# the darkness predates and is unrelated to Neural Rendering entirely.
+GAME_INI_HOTFIXES: dict[str, dict[str, str]] = {
+    "2909400": {"Hotfix.ColorResourceBarrier": "4"},
+}
+
+
 def enable_for_game(game_dir: Path, appid: str) -> dict:
     """Installs the DLSS5 runtime into `game_dir` under whichever proxy DLL
     name is free, copies in the user's own nvngx_dlssnr.dll, and turns the
     Neural Rendering pass on directly in the runtime's own ini , no in-game
-    overlay step required. `appid` is accepted for interface symmetry with
-    the rest of the DLSS5 command surface but isn't needed by this mechanism
-    (the install is entirely per-directory, unlike the old add-on-patch
-    approach which staged a per-appid symlink farm)."""
-    del appid
+    overlay step required. `appid` is used only to look up
+    GAME_INI_HOTFIXES , the install itself is entirely per-directory,
+    unlike the old add-on-patch approach which staged a per-appid symlink
+    farm."""
     if not game_dir.is_dir():
         return {"ok": False, "msg": f"game directory not found: {game_dir}"}
 
     nr_dll = asset_dir() / "nvngx_dlssnr.dll"
     if not nr_dll.is_file():
         return {"ok": False, "msg": f"nvngx_dlssnr.dll not found: {nr_dll}"}
+    trusted, detail = model_trust(nr_dll)
+    if not trusted:
+        return {"ok": False, "msg": f"{nr_dll.name}: {detail}"}
 
     runtime_ok, runtime_or_msg = runtime.ensure_dlss5_runtime_available()
     if not runtime_ok:
@@ -231,34 +448,34 @@ def enable_for_game(game_dir: Path, appid: str) -> dict:
     if not seed.get("ok"):
         return {"ok": False, "msg": f"installed but could not enable the pass: {seed.get('msg')}"}
 
+    for full_key, value in GAME_INI_HOTFIXES.get(appid, {}).items():
+        section, key = full_key.split(".", 1)
+        hotfix = runtime.set_ini_key(ini_path, section, key, value)
+        if not hotfix.get("ok"):
+            return {"ok": False, "msg": f"installed but could not apply {full_key} hotfix: {hotfix.get('msg')}"}
+
     # Neither Frame Generation ([FrameGen]) nor DLSS Super Resolution's
-    # preset ([DLSS]) get touched here. Both were tried as automatic
-    # defaults on 2026-09-02 and both were reverted after real testing on
-    # 007 First Light:
+    # preset ([DLSS]) get forced here , deliberately. Both were tried as
+    # automatic defaults on 2026-09-02, both were suspected and reverted when
+    # 007 First Light showed severe image corruption (blown highlights, a
+    # magenta cast, vertical comb artifacts), and both suspicions turned out
+    # to be wrong: the real cause was a build bug in the DLSS 5 runtime
+    # itself (spoofArch() in Streamline_Hooks.cpp reporting GPU architecture
+    # 0 unconditionally for every Frame Generation capability query, not just
+    # when actually needed , see libraries/dlssnr/FORK_NOTES.md for the full
+    # diagnosis, including a wrong first fix that crashed the game outright).
+    # Found by diff review, fixed, rebuilt on a Windows VM, confirmed clean
+    # by a real playtest , no ghosting, no corruption, no crash.
     #
-    # 1. Forcing DLSS.RenderPresetForAll=13 (Preset M, the transformer
-    #    model) alongside Neural Rendering produced severe image corruption
-    #    (blown highlights, a magenta cast, vertical comb artifacts) , not
-    #    a ghosting fix. Reverted first.
-    # 2. That alone didn't fix it. What was still forced at that point:
-    #    FrameGen.Enabled=true / FGInput=dlssg / FGOutput=dlssg. The
-    #    corruption persisted ("now shows pink all around"). DLSS Frame
-    #    Generation causing pink/magenta corruption is independently
-    #    documented across unrelated games and engines (e.g. a Microsoft
-    #    Flight Simulator forum report of "pink flicking" with DLSS FG on),
-    #    and the user's *original* report , before either default existed ,
-    #    was "Neural Rendering is working but has some ghosting issues": a
-    #    much milder complaint than full corruption. That timeline points
-    #    at Frame Generation, forced alongside an already-unofficial,
-    #    reverse-engineered Neural Rendering pass, as the actual cause.
-    #
-    # Neither combination has been confirmed safe on this hardware/game, so
-    # neither gets forced again. DlssNr.Enabled=true above is the one thing
-    # this flow still turns on automatically , that's the feature that was
-    # actually confirmed working (with ghosting, not corruption) before any
-    # of this. Frame Generation and the preset override both remain
-    # available as opt-in controls in the panel, each carrying a warning
-    # about what happened here , see Dlss5Panel.tsx.
+    # That fix is in the runtime binary now, not config, so it doesn't need
+    # anything forced here to take effect. Auto-forcing Preset M and Frame
+    # Generation together, in this exact combination, against the fixed
+    # build specifically, hasn't itself been re-tested , the panel's own
+    # controls (Dlss5Panel.tsx) restore the sensible-default seeding
+    # (turning either on for the first time picks a working value) as
+    # opt-in, one game at a time, rather than reintroducing them as another
+    # blanket default without that test. DlssNr.Enabled=true above is what
+    # this flow still turns on automatically.
 
     # The runtime's own startup splash is silenced unconditionally , this
     # is GreenBoost's feature now, not something that should announce a

@@ -151,8 +151,19 @@ export interface DlssStatus {
   };
 }
 
+/** Per-game game mode (GNOME extensions off + screen awake while playing).
+ *  Every field is optional: unset follows All Games. */
+export interface GameModeOverride {
+  enabled?:            boolean;
+  pause_extensions?:   boolean;
+  keep_screen_awake?:  boolean;
+  disable_extensions?: string[];
+  stop_user_units?:    string[];
+}
+
 export interface GameOverrides {
   fps_cap:           number;
+  game_mode?:        GameModeOverride | null;
   nis:               GameNisConfig | null;
   hdr:               boolean;
   dlss_preset:       string;
@@ -299,6 +310,9 @@ export interface GlobalSettingsState {
   nis_dispatch: boolean;
   gplasync: boolean;
   perf_lock: boolean;
+  game_mode: boolean;
+  game_mode_pause_extensions: boolean;
+  game_mode_keep_awake: boolean;
   compositor_suspend: boolean;
   ddr_prewarm: boolean;
   memlock_unlimited: boolean;

@@ -89,3 +89,9 @@ what_greenboost_proton_does.md
 .hyperresearch/
 research/
 docs/nvidia-forum-post.md
+
+# Secrets and internal working notes
+.env
+.env.*
+PRODUCT.md
+docs/ui-audit-*.md

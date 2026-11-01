@@ -101,7 +101,7 @@ export function InfoTip({ children }: { children: React.ReactNode }) {
           display: "inline-flex", alignItems: "center", justifyContent: "center",
           width: 16, height: 16, marginLeft: 6, padding: 0,
           background: "transparent", border: "none", cursor: "pointer",
-          color: open ? "#76b900" : "#6b7280",
+          color: open ? "#76b900" : "#8a9ab0",
           verticalAlign: "middle",
         }}
       >

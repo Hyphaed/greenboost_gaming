@@ -63,13 +63,13 @@ export function DllPicker({
   };
 
   return (
-    <CollapsibleSection title="DLSS SETTINGS" defaultOpen>
+    <CollapsibleSection title="DLSS libraries in this game" defaultOpen>
       {(onScanDlssStatus || onRestoreToShipped) && (
         <div style={{
           display: "flex", justifyContent: "space-between", alignItems: "center",
           padding: "0 16px 10px", flexWrap: "wrap", gap: 8,
         }}>
-          <span style={{ fontSize: 11, color: "#8a9ab0" }}>
+          <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
             {dlssStatus
               ? `Checked ${new Date(dlssStatus.scanned_at * 1000).toLocaleTimeString()} · ${dlssStatus.out_of_date} of ${dlssStatus.scanned} out of date`
               : scanningDlss
@@ -80,13 +80,13 @@ export function DllPicker({
           </span>
           <div style={{ display: "flex", gap: 6 }}>
             {onScanDlssStatus && (
-              <button className="btn-revert" style={{ padding: "4px 10px", fontSize: 11 }}
+              <button className="btn-revert" style={{ padding: "6px 12px", fontSize: 12, minHeight: 32 }}
                       onClick={onScanDlssStatus} disabled={scanningDlss}>
                 {scanningDlss ? "Scanning…" : dlssStatus ? "Re-scan" : "Scan for updates"}
               </button>
             )}
             {onRestoreToShipped && dlssStatus?.findings.some(f => f.can_restore_shipped) && (
-              <button className="btn-revert" style={{ padding: "4px 10px", fontSize: 11 }}
+              <button className="btn-revert" style={{ padding: "6px 12px", fontSize: 12, minHeight: 32 }}
                       onClick={onRestoreToShipped}
                       title="Puts back exactly what the game originally shipped with">
                 Restore all to shipped version
@@ -108,6 +108,22 @@ export function DllPicker({
           ?? (versions[0]?.version
               ?? (canShip ? SHIPPED
               : (restorePoints[0] ? `${BACKUP_PREFIX}${restorePoints[0].path}` : "")));
+        if (!hasAnyOption) {
+          // Nothing to swap in: no cached copy, no shipped snapshot, no backup. A disabled
+          // picker per row was noise, so say it once on one muted line.
+          return (
+            <div key={dll.path} className="gs-row" style={{ padding: "8px 16px", minHeight: 0 }}>
+              <div className="gs-row-label">
+                <div className="gs-row-sub" style={{ margin: 0 }}>
+                  <span style={{ color: "#dde1e8" }}>{dll.name}</span>{" "}
+                  <code>{dll.version || "unknown"}</code> · {dll.tech_type || "unknown"}
+                  {/dlss|streamline|nvngx|^sl\./i.test(dll.name + " " + dll.tech_type)
+                    ? " · download the libraries first to change it" : " · not managed by GreenBoost"}
+                </div>
+              </div>
+            </div>
+          );
+        }
         return (
           <div key={dll.path} className="gs-row"
                style={{ padding: "12px 16px" }}>
@@ -128,7 +144,7 @@ export function DllPicker({
                  style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
               {finding?.upgraded && (
                 <span style={{
-                  fontSize: 11, padding: "2px 8px", borderRadius: 4, fontWeight: 600,
+                  fontSize: 12, padding: "2px 8px", borderRadius: 4, fontWeight: 600,
                   background: "rgba(99,102,241,0.12)", color: "#a5b4fc",
                   border: "1px solid rgba(99,102,241,0.3)", whiteSpace: "nowrap",
                 }} title={`GreenBoost upgraded this from the shipped v${finding.shipped}`}>
@@ -138,16 +154,16 @@ export function DllPicker({
               {finding && (
                 finding.needs_update ? (
                   <span style={{
-                    fontSize: 11, padding: "2px 8px", borderRadius: 4, fontWeight: 600,
-                    background: "rgba(232,160,0,0.15)", color: "#e8a000",
+                    fontSize: 12, padding: "2px 8px", borderRadius: 4, fontWeight: 600,
+                    background: "rgba(232,160,0,0.15)", color: "var(--color-amber)",
                     border: "1px solid rgba(232,160,0,0.4)", whiteSpace: "nowrap",
                   }} title={`Latest known: v${finding.latest}`}>
                     ↑ update to v{finding.latest}
                   </span>
                 ) : (
                   <span style={{
-                    fontSize: 11, padding: "2px 7px", borderRadius: 4,
-                    background: "rgba(118,185,0,0.1)", color: "#76b900",
+                    fontSize: 12, padding: "2px 7px", borderRadius: 4,
+                    background: "rgba(118,185,0,0.1)", color: "var(--color-gb)",
                     border: "1px solid rgba(118,185,0,0.25)", whiteSpace: "nowrap",
                   }}>
                     up to date
@@ -159,7 +175,7 @@ export function DllPicker({
                       value={selected}
                       onChange={e => setPicked(prev => ({ ...prev, [dll.name]: e.target.value }))}>
                 {!hasAnyOption && (
-                  <option value="">(not in cache , Sync first)</option>
+                  <option value="">Not downloaded yet</option>
                 )}
                 {canShip && (
                   <option value={SHIPPED}>Shipped: v{finding!.shipped}</option>
@@ -176,7 +192,8 @@ export function DllPicker({
                 ))}
               </select>
               <button
-                className="btn-component"
+                className={finding?.needs_update && selected !== SHIPPED ? "btn-primary" : "btn-component"}
+                style={finding?.needs_update && selected !== SHIPPED ? { padding: "6px 14px", minHeight: 32 } : undefined}
                 disabled={!hasAnyOption || busy !== null}
                 onClick={() => apply(dll.name, selected)}
                 title={!hasAnyOption
@@ -185,14 +202,14 @@ export function DllPicker({
                     ? `Restore ${dll.name} to the version this game shipped with`
                     : `Replace in-game ${dll.name} with the selected cached version`}
               >
-                {busy === dll.name ? "Applying…" : "Apply"}
+                {busy === dll.name ? "Applying…" : finding?.needs_update && selected !== SHIPPED ? "Update" : "Apply"}
               </button>
             </div>
           </div>
         );
       })}
       {msg && (
-        <p style={{ fontSize: 12, color: "#76b900",
+        <p style={{ fontSize: 12, color: "var(--color-gb)",
                     padding: "0 16px 12px", margin: 0 }}>{msg}</p>
       )}
     </CollapsibleSection>

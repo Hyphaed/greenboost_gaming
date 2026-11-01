@@ -254,7 +254,7 @@ log line — `Multi-frame not supported, max generated frames 1 (SL Plugin
 supports 5, NGX feature supports 1)`. The plugin layer supports up to 5
 generated frames (4x+ MFG); the actual `nvngx_dlssg.dll` file loaded
 (`Nvngx_FG::EnsureLoaded ... loaded for direct-NVNGX Frame Generation`, real
-path checked: the one staged from `/home/ferran/Documents/DLSS5/SL
+path checked: the one staged from `~/Documents/DLSS5/SL
 2.13/nvngx_dlssg.dll`, dated 2026-08-27) only supports 1 generated frame
 (2x). `Nvngx_FG` forwards straight through to this real DLL — it is not a
 custom/lower-quality substitute — so this is a stale model DLL, not a

@@ -81,6 +81,57 @@ pub fn throttle_reasons(bits: u64) -> Vec<&'static str> {
     out
 }
 
+/// Throttle reasons worth showing a person. NVML raises SW_POWER_CAP (and
+/// friends) while the GPU idles at low clocks, which is not a problem to
+/// fix: at 20 W of 300 W and 2 % load the Status page was telling people
+/// "The GPU is slowing itself down: Power limit". So nothing is reported
+/// unless the GPU is actually busy, and a power cap is only believed when
+/// the card is drawing close to its limit. Thermal and PSU reasons stay as
+/// soon as the GPU is busy.
+pub fn effective_throttle_reasons(
+    bits: u64, gpu_util_pct: Option<u32>, power_mw: Option<u32>, limit_mw: Option<u32>,
+) -> Vec<&'static str> {
+    if gpu_util_pct.map_or(true, |u| u < 50) {
+        return Vec::new();
+    }
+    let near_limit = match (power_mw, limit_mw) {
+        (Some(p), Some(l)) if l > 0 => (p as u64) * 10 >= (l as u64) * 9,
+        _ => false,
+    };
+    throttle_reasons(bits)
+        .into_iter()
+        .filter(|r| *r != "Power limit" || near_limit)
+        .collect()
+}
+
+#[cfg(test)]
+mod throttle_tests {
+    use super::*;
+
+    #[test]
+    fn idle_gpu_reports_nothing() {
+        assert!(effective_throttle_reasons(THROTTLE_SW_POWER_CAP, Some(2), Some(20_000), Some(300_000)).is_empty());
+    }
+
+    #[test]
+    fn busy_but_far_below_the_limit_is_not_a_power_cap() {
+        assert!(effective_throttle_reasons(THROTTLE_SW_POWER_CAP, Some(97), Some(120_000), Some(300_000)).is_empty());
+    }
+
+    #[test]
+    fn busy_at_the_limit_is_a_power_cap() {
+        assert_eq!(effective_throttle_reasons(THROTTLE_SW_POWER_CAP, Some(97), Some(285_000), Some(300_000)),
+                   vec!["Power limit"]);
+    }
+
+    #[test]
+    fn thermal_is_kept_when_busy_and_unknown_util_is_quiet() {
+        assert_eq!(effective_throttle_reasons(THROTTLE_HW_THERMAL, Some(90), Some(100_000), Some(300_000)),
+                   vec!["Thermal (hardware)"]);
+        assert!(effective_throttle_reasons(THROTTLE_HW_THERMAL, None, None, None).is_empty());
+    }
+}
+
 impl NvmlSnapshot {
     pub fn fan_speed_avg(&self) -> Option<u32> {
         if self.fan_speeds.is_empty() { return None; }

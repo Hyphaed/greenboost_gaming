@@ -150,7 +150,8 @@ everything first.
 | **GreenBoost Proton** | A Proton version that shows up in Steam's compatibility list next to Proton 10.0 and Experimental, and that you pick per game the same way. It doesn't replace Proton , it sits in front of the one you already have: prepares the machine for that specific title, then hands the launch to upstream Proton (stable or Experimental, selected by a `channel` file) and gets out of the way. Before the hand-off it sets CPU affinity from your real topology, applies the per-game JSON profile's env / DXR / VKD3D settings, activates the GPU power-clock profile and matching fan curve, overlays dxvk-gplasync, stages the NIS shaders, tunes swappiness and the compositor for the session, and writes a telemetry line on exit. If any of that fails it falls back to a plain upstream Proton launch instead of taking the game down with it |
 | **Fan daemon** | systemd user unit with a 3 °C hysteresis so your fans stop oscillating |
 | **Session ownership** | Closing the window sends the Suite to the system tray instead of quitting, and quitting stops the game it launched , the way Steam behaves. GreenBoost Proton declares itself a subreaper so it keeps hold of the whole process tree even when a launcher forks and exits; the game is asked to exit first and only forced if it refuses, and Wine's shared processes are left alone so another prefix is unaffected. Both behaviours are settings, and if your desktop has no tray the Suite tells you and closes as before |
-| **DLSS / Streamline updater** | Pulls the newest DLLs straight from NVIDIA's official GitHub repos, keeps every version it has ever fetched, and lets you pick per game |
+| **DLSS / Streamline updater** | Pulls the newest DLLs straight from NVIDIA's official GitHub repos, keeps every version it has ever fetched, and lets you pick per game. "Update DLSS" installs from that cache and only downloads what's missing; backup folders such as `_DLSS5_Backup` are never treated as the game's DLLs |
+| **Game mode** | Per game, optionally switches GNOME extensions, user units and screen-blanking for the session and restores them exactly afterwards. The screen-awake inhibit dies with the process, so a crash can't leave blanking disabled |
 | **~299 per-game profiles** | JSON files in `profiles/per-game/` with known-good tweaks per title |
 
 What the views do:
@@ -226,8 +227,33 @@ built against , but nothing beyond 007 First Light has actually been tested
 yet. Whether the pass changes the picture in any given game also hasn't been
 measured with a real A/B comparison. What's confirmed: the runtime installs
 cleanly and the game's own native DLSS Super Resolution keeps evaluating
-every frame underneath it, unaffected. See `CHANGELOG.md` for the fuller
-story.
+every frame underneath it, unaffected.
+
+This isn't a light patch on top of OptiScaler , it's a heavy fork: every
+AMD/Intel/XeSS backend and the entire ImGui menu stack removed, ~198,000
+lines gone across 392 files. GreenBoost Gaming Suite itself only runs on Linux, so
+that fork can't be built here , development happens on Linux (this repo),
+and every build is done by pushing the source to a Windows 11 VM over SSH,
+compiling with the real MSVC/DirectX toolchain there, and pulling the built
+DLL back. That split-machine workflow is also how a real bug in the strip got
+caught and fixed the same day: an early build ran, but corrupted the picture
+(later, a wrong first fix crashed the game outright before the real fix
+landed) , full account, including the wrong turns, in
+`libraries/dlssnr/FORK_NOTES.md`.
+
+One thing this fork's fix **did** confirm on 007 First Light: the crash and
+the severe image corruption (blown highlights, a magenta cast, vertical
+noise) that showed up while chasing an earlier ghosting report are gone ,
+real playtest, clean process exit, no crash report. What it did **not**
+confirm, on checking the actual diagnostic log afterward: whether DLSS Super
+Resolution or Neural Rendering were even active during that test. Zero
+`CreateFeature`/`EvaluateFeature` calls for any DLSS feature appear in it,
+and `nvngx_dlssnr.dll` is never mentioned , consistent with DLSS not having
+been turned on in the game's own graphics menu for that particular session,
+which the Neural Rendering pass needs to do anything at all. So "no
+ghosting" in that test may just mean nothing DLSS-related ran, not that the
+ghosting is actually fixed. That's still an open question , see
+`libraries/dlssnr/FORK_NOTES.md` for the honest state of it.
 
 ---
 
@@ -479,13 +505,27 @@ Logic was ported or adapted from those other projects;
   the same physical device.
 - **[DLSS-Updater](https://github.com/Recol/DLSS-Updater)** , DLL
   version scanning + patching pattern adapted for the DLSS panel.
-- **[OptiScaler](https://github.com/optiscaler/OptiScaler)** and its
+- **[OptiScaler](https://github.com/optiscaler/OptiScaler)** (GPL v3) and its
   **[Dagherbou/OptiScaler_DLSSNR](https://github.com/Dagherbou/OptiScaler_DLSSNR)**
-  fork , studying how OptiScaler hooks a game's DXGI/D3D12/NGX calls is what
-  made DLSS 5 (Neural Rendering) injection possible here at all. GreenBoost's
-  own DLSS 5 runtime (`libraries/dlssnr/`) is a further NVIDIA-only fork of
-  that DLSSNR fork, built specifically for this project , see `CHANGELOG.md`
-  and `libraries/dlssnr/FORK_NOTES.md` for the full history.
+  fork , not just a reference, a direct derivative. GreenBoost's own DLSS 5
+  runtime (`libraries/dlssnr/`, shipped as `GreenBoostDLSS5.dll`) is a further
+  NVIDIA-only fork of the DLSSNR fork, with every AMD/Intel/XeSS code path and
+  the ImGui menu stack removed , the DXGI/D3D12/NGX hooking underneath, and
+  the DLSS 5 Neural Rendering pass itself, is OptiScaler's own work. Full
+  history of the fork, including a same-day bug found and fixed against it,
+  in `libraries/dlssnr/FORK_NOTES.md`; the license text ships at
+  `libraries/dlssnr/LICENSE`.
+- **[RenoDX](https://github.com/clshortfuse/renodx)** by clshortfuse (MIT) ,
+  the colour composition inside the Neural Rendering pass
+  (`OptiScaler/dlssnr/DlssNr_Codec.h`) is taken directly from RenoDX's own
+  DLSS 5 add-on: the two-branch tone-map ratio, the OkLab hue correction, and
+  the final blend between a luminance-only result and the model's full
+  colour. Reimplemented with different names and comments for this codebase,
+  which doesn't make it original work , it's RenoDX's design, credited as
+  theirs. Full attribution, including what in that same file is *not*
+  RenoDX's (the OkLab conversion matrices are Bjorn Ottosson's published
+  constants; the colour-space transforms are standard, vendor-neutral colour
+  science), ships at `libraries/dlssnr/runtime/Licenses/RenoDX_ATTRIBUTION.txt`.
 - **[GreenWithEnvy](https://gitlab.com/leinardi/gwe)** (GPL v3) ,
   reference for the GPU profile editor (clocks, fan curve, power limit). 
   (actually I have permission for being the successor / official mantainer of GreenWithEnvy)

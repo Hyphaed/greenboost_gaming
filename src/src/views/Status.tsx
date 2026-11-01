@@ -4,6 +4,8 @@ import type { SystemStatus, GpuInfo, GpuMetrics, InstallStreamProps, NvidiaUpdat
 import { Icon } from "../icons";
 import { InstallStreamModal } from "../components/InstallStreamModal";
 import { UpdateBanner } from "../components/UpdateBanner";
+import { StatusHero, type StatusCheck } from "../components/StatusHero";
+import { LiveGauges } from "../components/LiveGauges";
 
 type SessionRecord = {
   appid: string;
@@ -204,13 +206,33 @@ export function StatusView() {
     }
   };
 
+  // What the hero reports. Order = order of importance; only "warn" changes the headline.
+  const checks: StatusCheck[] = [];
+  if (status) {
+    if (status.module === "Loaded") checks.push({ id: "module", level: "ok", title: `GreenBoost module${status.module_version ? " v" + status.module_version : ""}` });
+    else checks.push({ id: "module", level: "warn", title: "GreenBoost kernel module isn't loaded", hint: "Memory spill and the per-game extras need it.", action: { label: "Install module", onClick: onInstallModule } });
+    if (layersInstalled) checks.push({ id: "layers", level: "ok", title: "Graphics layers" });
+    else checks.push({ id: "layers", level: "warn", title: "GreenBoost graphics layers aren't installed", hint: "The overlay and shader tools run through them.", action: { label: "Install layers", onClick: onInstallLayers } });
+    if (status.nvidia_mismatch) checks.push({ id: "reboot", level: "warn", title: "Restart to finish the driver update", hint: `The new driver (${status.nvidia_mismatch.on_disk}) is installed but not running yet.`, action: { label: "Restart now", onClick: onRebootNow } });
+    else if (nvUpdate?.checked && nvUpdate.update_available) checks.push({ id: "driver", level: "warn", title: `NVIDIA driver ${nvUpdate.available_version ?? ""} is available`.replace("  ", " "), hint: "Updating needs a restart afterwards.", action: { label: "Update driver", onClick: onUpgradeNvidia } });
+    else checks.push({ id: "driver", level: "ok", title: `Driver ${status.nvidia_driver}` });
+    if (status.cpu_governor !== "performance") checks.push({ id: "gov", level: "note", title: `CPU in ${status.cpu_governor} mode`, hint: "Games run fastest with the CPU in performance mode. Turn on 'Performance lock' in Games → All Games." });
+  }
+  if (liveMetrics?.throttle_known && liveMetrics.throttle_reasons.length > 0) checks.push({ id: "throttle", level: "warn", title: "The GPU is slowing itself down", hint: (r => r.charAt(0).toUpperCase() + r.slice(1))(liveMetrics.throttle_reasons.join(", ")) + ". Lower the in-game settings, or raise the power limit in Profile." });
+  if ((liveMetrics?.temp_c ?? 0) > 85) checks.push({ id: "hot", level: "warn", title: `The GPU is hot (${liveMetrics!.temp_c} °C)`, hint: "Check airflow, or raise the fan curve in Profile." });
+
   return (
     <div className="content-scroll">
-      <div style={{ maxWidth: 700, margin: "0 auto" }}>
+      <div className="status-page">
         {/* Renders nothing unless something is actually out of date. */}
         <UpdateBanner compact onUpgrade={onUpgrade} />
-        <p className="section-title">My Gaming Rig</p>
-        <div className="section-card">
+        <StatusHero
+          checks={checks}
+          subtitle={[gpu?.name, status?.nvidia_driver ? `driver ${status.nvidia_driver}` : null, status?.session_type ? `${status.session_type} session` : null].filter(Boolean).join(" · ") || "Reading your system…"}
+          banner={(moduleMsg || layersMsg || rebootMsg) ? <p className="status-msg" role="status">{moduleMsg || layersMsg || rebootMsg}</p> : undefined} />
+        <LiveGauges m={liveMetrics} pool={poolBrief} />
+        <h2 className="section-title">Your system</h2>
+        <div className="section-card info-grid">
           {status?.cpu_name && (
             <div className="info-row">
               <div className="info-label">CPU</div>
@@ -241,7 +263,7 @@ export function StatusView() {
                   <span>{status.nvidia_driver}</span>
                   {status.nvidia_mismatch && (
                     <span style={{
-                      fontSize: 11, padding: "2px 7px", borderRadius: 4,
+                      fontSize: 12, padding: "2px 7px", borderRadius: 4,
                       background: "rgba(255,165,0,0.15)", color: "#ffb347",
                       border: "1px solid rgba(255,165,0,0.35)", whiteSpace: "nowrap",
                     }}>
@@ -250,8 +272,8 @@ export function StatusView() {
                   )}
                   {nvUpdate === null && (
                     <span style={{
-                      fontSize: 11, padding: "2px 7px", borderRadius: 4,
-                      background: "rgba(154,154,176,0.1)", color: "#8a9ab0",
+                      fontSize: 12, padding: "2px 7px", borderRadius: 4,
+                      background: "rgba(154,154,176,0.1)", color: "var(--color-text-muted)",
                       border: "1px solid rgba(154,154,176,0.25)", whiteSpace: "nowrap",
                     }}>
                       checking for updates…
@@ -261,8 +283,8 @@ export function StatusView() {
                     <span
                       title={`No supported package manager detected (source: ${nvUpdate.source}) , install status unknown`}
                       style={{
-                        fontSize: 11, padding: "2px 7px", borderRadius: 4,
-                        background: "rgba(154,154,176,0.1)", color: "#8a9ab0",
+                        fontSize: 12, padding: "2px 7px", borderRadius: 4,
+                        background: "rgba(154,154,176,0.1)", color: "var(--color-text-muted)",
                         border: "1px solid rgba(154,154,176,0.25)", whiteSpace: "nowrap",
                       }}>
                       not checked for updates
@@ -270,8 +292,8 @@ export function StatusView() {
                   )}
                   {nvUpdate && nvUpdate.checked && !nvUpdate.update_available && (
                     <span style={{
-                      fontSize: 11, padding: "2px 7px", borderRadius: 4,
-                      background: "rgba(118,185,0,0.1)", color: "#76b900",
+                      fontSize: 12, padding: "2px 7px", borderRadius: 4,
+                      background: "rgba(118,185,0,0.1)", color: "var(--color-gb)",
                       border: "1px solid rgba(118,185,0,0.25)", whiteSpace: "nowrap",
                     }}>
                       latest from {nvUpdate.source}
@@ -281,8 +303,8 @@ export function StatusView() {
                     <button
                       onClick={onUpgradeNvidia}
                       style={{
-                        fontSize: 11, padding: "2px 10px", borderRadius: 4,
-                        background: "rgba(232,160,0,0.15)", color: "#e8a000",
+                        fontSize: 12, padding: "2px 10px", borderRadius: 4,
+                        background: "rgba(232,160,0,0.15)", color: "var(--color-amber)",
                         border: "1px solid rgba(232,160,0,0.4)", cursor: "pointer",
                         whiteSpace: "nowrap", fontWeight: 600,
                       }}
@@ -298,13 +320,13 @@ export function StatusView() {
                 <div className={`info-value ${status.module === "Loaded" ? "ok" : "warn"}`}>
                   {status.module}
                   {status.module_version && (
-                    <span style={{ marginLeft: 8, fontSize: 11, color: "#8a9ab0" }}>
+                    <span style={{ marginLeft: 8, fontSize: 12, color: "var(--color-text-muted)" }}>
                       v{status.module_version}
                     </span>
                   )}
                   {status.greenboost_gaming_mode && (
                     <span style={{
-                      marginLeft: 8, fontSize: 11, padding: "1px 6px", borderRadius: 4,
+                      marginLeft: 8, fontSize: 12, padding: "1px 6px", borderRadius: 4,
                       background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.3)",
                       color: "#86efac",
                     }}>
@@ -344,7 +366,7 @@ export function StatusView() {
               <div className="info-label">Active GPU Profile</div>
               <div className="info-value">
                 <span style={{
-                  background: "rgba(118,185,0,0.12)", color: "#76b900",
+                  background: "rgba(118,185,0,0.12)", color: "var(--color-gb)",
                   padding: "2px 8px", borderRadius: 4,
                   fontSize: 12, fontWeight: 600,
                 }}>
@@ -366,7 +388,7 @@ export function StatusView() {
               <div className="info-label">Display Server</div>
               <div className="info-value" style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{
-                  fontSize: 11, padding: "2px 7px", borderRadius: 4,
+                  fontSize: 12, padding: "2px 7px", borderRadius: 4,
                   background: status.session_type === "wayland"
                     ? "rgba(34,211,238,0.12)" : "rgba(118,185,0,0.12)",
                   color: status.session_type === "wayland" ? "#22d3ee" : "#76b900",
@@ -392,15 +414,15 @@ export function StatusView() {
                     <div className="info-value" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                       <span>{c.driver}</span>
                       <span style={{
-                        fontSize: 11, padding: "2px 7px", borderRadius: 4,
-                        background: "rgba(154,154,176,0.1)", color: "#8a9ab0",
+                        fontSize: 12, padding: "2px 7px", borderRadius: 4,
+                        background: "rgba(154,154,176,0.1)", color: "var(--color-text-muted)",
                         border: "1px solid rgba(154,154,176,0.25)",
                       }}>
                         {c.connection}
                       </span>
                       {c.battery_percent != null && (
                         <span style={{
-                          fontSize: 11, padding: "2px 7px", borderRadius: 4,
+                          fontSize: 12, padding: "2px 7px", borderRadius: 4,
                           background: c.battery_percent > 20 ? "rgba(118,185,0,0.1)" : "rgba(232,160,0,0.15)",
                           color: c.battery_percent > 20 ? "#76b900" : "#e8a000",
                           border: `1px solid ${c.battery_percent > 20 ? "rgba(118,185,0,0.25)" : "rgba(232,160,0,0.4)"}`,
@@ -413,7 +435,7 @@ export function StatusView() {
                   {c.hidraw_readable === false && (
                     <div className="info-row">
                       <div className="info-label" />
-                      <div className="info-value" style={{ fontSize: 11, color: "#e8a000" }}>
+                      <div className="info-value" style={{ fontSize: 12, color: "var(--color-amber)" }}>
                         Steam can't read this pad's raw device file, so in-game button
                         remapping through Steam Input won't work , the pad itself still
                         works normally otherwise. This is a udev rule conflict between
@@ -423,47 +445,6 @@ export function StatusView() {
                   )}
                 </div>
               ))}
-            </div>
-          </>
-        )}
-
-        {(liveMetrics || poolBrief) && (
-          <>
-            <p className="section-title" style={{ marginTop: 24 }}>Live GPU</p>
-            <div className="section-card">
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "2px 0" }}>
-                {[
-                  ...(liveMetrics ? [
-                    { label: "Temperature", value: liveMetrics.temp_c != null ? `${liveMetrics.temp_c} °C` : ",", warn: (liveMetrics.temp_c ?? 0) > 85 },
-                    { label: "GPU Load",    value: liveMetrics.gpu_util_pct != null ? `${liveMetrics.gpu_util_pct}%` : "," },
-                    { label: "Fan",         value: liveMetrics.fan_pct != null ? `${liveMetrics.fan_pct}%` : "," },
-                    { label: "Power",       value: liveMetrics.power_w != null
-                      ? `${liveMetrics.power_w.toFixed(0)} / ${liveMetrics.power_limit_w?.toFixed(0) ?? "?"} W`
-                      : "," },
-                    { label: "GPU Clock",  value: liveMetrics.clock_gpu_mhz != null ? `${liveMetrics.clock_gpu_mhz} MHz` : "," },
-                    { label: "Mem Clock",  value: liveMetrics.clock_mem_mhz != null ? `${liveMetrics.clock_mem_mhz} MHz` : "," },
-                    { label: "VRAM Used",  value: liveMetrics.vram_used_mb != null
-                      ? `${liveMetrics.vram_used_mb.toLocaleString()} / ${liveMetrics.vram_total_mb?.toLocaleString() ?? "?"} MB`
-                      : "," },
-                  ] : []),
-                  // T2 DDR Used , the game-side counterpart to "VRAM Used" above:
-                  // once VRAM fills, GreenBoost spills into this pool. Only shown
-                  // when the kernel module is actually loaded (poolBrief != null);
-                  // get_pool_brief_impl returns null otherwise rather than a
-                  // misleading "0".
-                  ...(poolBrief ? [{
-                    label: "T2 DDR Used",
-                    value: formatVram(poolBrief.t2_alloc_mb ?? poolBrief.t2_alloc_gb * 1024)
-                      + ` / ${poolBrief.t2_max_gb} GB`,
-                    warn: (poolBrief.t2_alloc_mb ?? poolBrief.t2_alloc_gb) > 0,
-                  }] : []),
-                ].map(({ label, value, warn }) => (
-                  <div key={label} className="info-row" style={{ paddingTop: 8, paddingBottom: 8 }}>
-                    <div className="info-label">{label}</div>
-                    <div className="info-value" style={warn ? { color: "#f87171" } : undefined}>{value}</div>
-                  </div>
-                ))}
-              </div>
             </div>
           </>
         )}
@@ -478,7 +459,7 @@ export function StatusView() {
                     {["Game", "Duration", "VRAM", "Result", "When"].map(h => (
                       <th key={h} style={{
                         padding: "8px 14px", textAlign: "left",
-                        color: "#8a9ab0", fontWeight: 600, fontSize: 11,
+                        color: "var(--color-text-muted)", fontWeight: 600, fontSize: 12,
                         textTransform: "uppercase", letterSpacing: "0.04em",
                       }}>{h}</th>
                     ))}
@@ -493,7 +474,7 @@ export function StatusView() {
                       <td style={{ padding: "8px 14px", color: "#ccc", fontWeight: 500 }}>
                         {s.game_name || s.appid}
                       </td>
-                      <td style={{ padding: "8px 14px", color: "#9a9a9a" }}>
+                      <td style={{ padding: "8px 14px", color: "var(--color-text-dim)" }}>
                         {formatDuration(s.duration_s)}
                       </td>
                       <td style={{ padding: "8px 14px" }}>
@@ -525,12 +506,12 @@ export function StatusView() {
                       </td>
                       <td style={{ padding: "8px 14px" }}>
                         {s.rc === 0 ? (
-                          <span style={{ color: "#76b900", fontWeight: 700 }}>✓</span>
+                          <span style={{ color: "var(--color-gb)", fontWeight: 700 }}>✓</span>
                         ) : (
-                          <span style={{ color: "#e05252", fontWeight: 700 }}>✗ ({s.rc})</span>
+                          <span style={{ color: "var(--color-text-error)", fontWeight: 700 }}>✗ ({s.rc})</span>
                         )}
                       </td>
-                      <td style={{ padding: "8px 14px", color: "#8a9ab0" }}>
+                      <td style={{ padding: "8px 14px", color: "var(--color-text-muted)" }}>
                         {formatRelativeTime(s.ts)}
                       </td>
                     </tr>
@@ -562,7 +543,7 @@ export function StatusView() {
               <div style={{ fontWeight: 600, fontSize: 13, color: "#ffb347", marginBottom: 4 }}>
                 NVIDIA driver update pending , reboot required
               </div>
-              <div style={{ fontSize: 12, color: "#9a9a9a", lineHeight: 1.6, marginBottom: 10 }}>
+              <div style={{ fontSize: 12, color: "var(--color-text-dim)", lineHeight: 1.6, marginBottom: 10 }}>
                 Driver <strong style={{ color: "#ccc" }}>{status.nvidia_mismatch.on_disk}</strong> was
                 installed while module <strong style={{ color: "#ccc" }}>{status.nvidia_mismatch.loaded}</strong> is
                 still running. GPU monitoring and overclocking are unavailable until you reboot.
@@ -597,7 +578,7 @@ export function StatusView() {
               <div style={{ fontWeight: 600, fontSize: 13, color: "#ffb347", marginBottom: 4 }}>
                 GreenBoost Kernel Module Not Loaded
               </div>
-              <div style={{ fontSize: 12, color: "#9a9a9a", lineHeight: 1.6, marginBottom: 10 }}>
+              <div style={{ fontSize: 12, color: "var(--color-text-dim)", lineHeight: 1.6, marginBottom: 10 }}>
                 The GreenBoost kernel module provides GPU memory extensions (GVM) and low-level
                 hardware tuning. Without it, VRAM extension, power management, and overclocking
                 features are unavailable. Install it from the official GreenBoost sources on GitLab.
@@ -625,13 +606,13 @@ export function StatusView() {
               <div className="info-label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <Icon.Layers /> Graphics Layers
               </div>
-              <div style={{ fontSize: 11, color: "#8a9ab0", marginTop: 2 }}>
+              <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 2 }}>
                 Vulkan implicit layer + OpenGL LD_PRELOAD interposer for T2/T3 memory overflow
               </div>
               {/* Sub-rows: individual status for each layer */}
               <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11 }}>
-                  <span style={{ color: "#8a9ab0", minWidth: 90 }}>Vulkan layer</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                  <span style={{ color: "var(--color-text-muted)", minWidth: 90 }}>Vulkan layer</span>
                   <span style={{
                     padding: "1px 7px", borderRadius: 4, fontWeight: 600,
                     background: status?.vulkan_layer === "Installed"
@@ -643,8 +624,8 @@ export function StatusView() {
                     {status?.vulkan_layer ?? ","}
                   </span>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11 }}>
-                  <span style={{ color: "#8a9ab0", minWidth: 90 }}>OpenGL layer</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                  <span style={{ color: "var(--color-text-muted)", minWidth: 90 }}>OpenGL layer</span>
                   <span style={{
                     padding: "1px 7px", borderRadius: 4, fontWeight: 600,
                     background: status?.gl_layer === "Installed"
@@ -661,7 +642,7 @@ export function StatusView() {
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               {layersInstalled ? (
                 <button className="btn-component"
-                        style={{ borderColor: "#e05252", color: "#e05252" }}
+                        style={{ borderColor: "var(--color-red)", color: "var(--color-text-error)" }}
                         onClick={onUninstallLayers}>
                   Uninstall
                 </button>
@@ -679,7 +660,7 @@ export function StatusView() {
               <div className="info-label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <Icon.Package /> GreenBoost Proton
               </div>
-              <div style={{ fontSize: 11, color: "#8a9ab0", marginTop: 2 }}>
+              <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 2 }}>
                 Custom Proton build with vkd3d-proton, dxvk-nvapi, and NTSync support
               </div>
             </div>
@@ -691,7 +672,7 @@ export function StatusView() {
               )}
               {protonInstalled ? (
                 <button className="btn-component"
-                        style={{ borderColor: "#e05252", color: "#e05252" }}
+                        style={{ borderColor: "var(--color-red)", color: "var(--color-text-error)" }}
                         onClick={onUninstallProton}>
                   Uninstall
                 </button>
@@ -704,7 +685,7 @@ export function StatusView() {
           </div>
           {protonMsg && <p className="component-msg">{protonMsg}</p>}
           {status?.proton_wrapper_stale === true && (
-            <p className="component-msg" style={{ color: "#e8a000" }}>
+            <p className="component-msg" style={{ color: "var(--color-amber)" }}>
               Deployed copy differs from this checkout , re-run{" "}
               <code>sudo ./install.sh</code> to pick up recent fixes before
               relying on GreenBoost Proton.
@@ -716,7 +697,7 @@ export function StatusView() {
               <div className="info-label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <Icon.Cpu /> GreenBoost Kernel Module
               </div>
-              <div style={{ fontSize: 11, color: "#8a9ab0", marginTop: 2 }}>
+              <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 2 }}>
                 Kernel module for GVM (GPU virtual memory extension) and hardware tuning
                 {status?.module_version && <span> , v{status.module_version}</span>}
               </div>
@@ -739,7 +720,7 @@ export function StatusView() {
 
         <p className="section-title">GreenBoost Gaming Suite</p>
         <div className="section-card">
-          <p style={{ fontSize: 13, color: "#9a9a9a", lineHeight: 1.7, margin: 0 }}>
+          <p style={{ fontSize: 13, color: "var(--color-text-dim)", lineHeight: 1.7, margin: 0 }}>
             GreenBoost Gaming Suite optimizes your Linux gaming experience through hardware-aware
             configuration tuning, RTX technology enablement, and Greenboost Proton integration.
 

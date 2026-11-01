@@ -53,19 +53,19 @@ export function FolderBrowserModal({
           padding: "14px 20px", borderBottom: "1px solid #2a2a2a",
           display: "flex", alignItems: "center", gap: 10,
         }}>
-          <span style={{ fontWeight: 600, fontSize: 14, color: "#e6e6e6" }}>
+          <span style={{ fontWeight: 600, fontSize: 14, color: "var(--color-text)" }}>
             Choose a DLL folder
           </span>
           <button
             className="btn-revert"
-            style={{ marginLeft: "auto", padding: "4px 10px", fontSize: 11 }}
+            style={{ marginLeft: "auto", padding: "4px 10px", fontSize: 12 }}
             onClick={() => setCwd(result?.home)}
           >
             Home
           </button>
           <button
             className="btn-revert"
-            style={{ padding: "4px 10px", fontSize: 11 }}
+            style={{ padding: "4px 10px", fontSize: 12 }}
             disabled={!result?.parent}
             onClick={() => setCwd(result?.parent ?? undefined)}
           >
@@ -74,12 +74,12 @@ export function FolderBrowserModal({
         </div>
 
         <div style={{
-          padding: "8px 20px", fontSize: 11, color: "#8a9ab0",
+          padding: "8px 20px", fontSize: 12, color: "var(--color-text-muted)",
           borderBottom: "1px solid #2a2a2a", wordBreak: "break-all",
         }}>
           {result?.path ?? "…"}
           {result && result.dll_count > 0 && (
-            <span style={{ color: "#76b900", marginLeft: 8 }}>
+            <span style={{ color: "var(--color-gb)", marginLeft: 8 }}>
               {result.dll_count} .dll file{result.dll_count === 1 ? "" : "s"} here
             </span>
           )}
@@ -87,12 +87,12 @@ export function FolderBrowserModal({
 
         <div style={{ flex: 1, overflowY: "auto", minHeight: 240, maxHeight: "50vh" }}>
           {error && (
-            <p style={{ padding: "12px 20px", fontSize: 12, color: "#e05252" }}>
+            <p style={{ padding: "12px 20px", fontSize: 12, color: "var(--color-text-error)" }}>
               {error}
             </p>
           )}
           {!error && result?.entries.length === 0 && (
-            <p style={{ padding: "12px 20px", fontSize: 12, color: "#8a9ab0" }}>
+            <p style={{ padding: "12px 20px", fontSize: 12, color: "var(--color-text-muted)" }}>
               No subfolders here.
             </p>
           )}
@@ -109,8 +109,8 @@ export function FolderBrowserModal({
               <div className="gs-row-control">
                 {entry.dll_count > 0 && (
                   <span style={{
-                    fontSize: 11, padding: "2px 8px", borderRadius: 4,
-                    background: "rgba(118,185,0,0.12)", color: "#76b900",
+                    fontSize: 12, padding: "2px 8px", borderRadius: 4,
+                    background: "rgba(118,185,0,0.12)", color: "var(--color-gb)",
                     border: "1px solid rgba(118,185,0,0.3)",
                   }}>
                     {entry.dll_count} DLL{entry.dll_count === 1 ? "" : "s"}

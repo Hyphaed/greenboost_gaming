@@ -12,7 +12,7 @@ const NAV: { id: ViewType; icon: () => React.ReactElement; label: string }[] = [
 
 export function Sidebar({ view, setView }: { view: ViewType; setView: (v: ViewType) => void }) {
   return (
-    <nav className="sidebar">
+    <nav className="sidebar" aria-label="Main">
       <div className="sidebar-logo">
         <div className="sidebar-logo-icon">GB</div>
         <div className="sidebar-logo-dot" />
@@ -24,6 +24,7 @@ export function Sidebar({ view, setView }: { view: ViewType; setView: (v: ViewTy
             className={`nav-item${view === item.id ? " active" : ""}`}
             onClick={() => setView(item.id)}
             title={item.label}
+            aria-current={view === item.id ? "page" : undefined}
           >
             <span className="nav-icon"><item.icon /></span>
             <span>{item.label}</span>

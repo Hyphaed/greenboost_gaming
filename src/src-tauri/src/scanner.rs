@@ -228,6 +228,13 @@ pub fn get_steam_libraries() -> Vec<PathBuf> {
 /// is checked and only one with `dwStrucVersion == 0x00010000` (the fixed
 /// version-resource format tag) is accepted , matches the validation added
 /// to the Python reader (`gb_gaming/dlss_updater.py::_read_pe_fileversion`).
+/// True for a directory GreenBoost itself keeps backups in (e.g.
+/// `_DLSS5_Backup`); its DLL copies are not the game's live libraries.
+pub fn is_backup_dir(e: &walkdir::DirEntry) -> bool {
+    e.depth() > 0 && e.file_type().is_dir()
+        && e.file_name().to_string_lossy().to_lowercase().contains("backup")
+}
+
 pub fn get_dll_version(path: &Path) -> String {
     match read_pe_fileversion(path) {
         Some((a, b, c, d)) => format!("{a}.{b}.{c}.{d}"),
@@ -345,7 +352,7 @@ pub fn scan_heroic_games() -> Vec<Game> {
             if !game_dir.exists() { continue; }
 
             let mut found_dlls = Vec::new();
-            for walk_entry in WalkDir::new(&game_dir).max_depth(10).into_iter().flatten() {
+            for walk_entry in WalkDir::new(&game_dir).max_depth(10).into_iter().filter_entry(|e| !is_backup_dir(e)).flatten() {
                 let f_path = walk_entry.path();
                 if !f_path.is_file() { continue; }
                 if let Some(f_name) = f_path.file_name().and_then(|n| n.to_str()) {
@@ -398,7 +405,7 @@ pub fn scan_heroic_games() -> Vec<Game> {
                         if !game_dir.exists() { continue; }
 
                         let mut found_dlls = Vec::new();
-                        for walk_entry in WalkDir::new(&game_dir).max_depth(10).into_iter().flatten() {
+                        for walk_entry in WalkDir::new(&game_dir).max_depth(10).into_iter().filter_entry(|e| !is_backup_dir(e)).flatten() {
                             let f_path = walk_entry.path();
                             if !f_path.is_file() { continue; }
                             if let Some(f_name) = f_path.file_name().and_then(|n| n.to_str()) {
@@ -499,7 +506,7 @@ pub fn scan_lutris_games() -> Vec<Game> {
         };
 
         let mut found_dlls = Vec::new();
-        for walk_entry in WalkDir::new(&game_dir).max_depth(10).into_iter().flatten() {
+        for walk_entry in WalkDir::new(&game_dir).max_depth(10).into_iter().filter_entry(|e| !is_backup_dir(e)).flatten() {
             let f_path = walk_entry.path();
             if !f_path.is_file() { continue; }
             if let Some(f_name) = f_path.file_name().and_then(|n| n.to_str()) {
@@ -754,7 +761,7 @@ pub fn scan_games() -> Vec<Game> {
             // totals the directory's size on this same walk , reused as
             // leftover_bytes below for a not-installed entry, rather than
             // walking the tree a second time just to size it.
-            for walk_entry in WalkDir::new(&game_dir).max_depth(10).into_iter().flatten() {
+            for walk_entry in WalkDir::new(&game_dir).max_depth(10).into_iter().filter_entry(|e| !is_backup_dir(e)).flatten() {
                 let f_path = walk_entry.path();
                 if !f_path.is_file() { continue; }
                 if let Ok(meta) = walk_entry.metadata() {

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { SwitchLook } from "../components/Toggle";
 import { invoke } from "@tauri-apps/api/core";
 import type { DisplayInfo } from "../types";
 import { Icon } from "../icons";
@@ -16,8 +17,9 @@ interface NightLightState {
   available:      boolean;
 }
 
+const fmtHz = (r: number) => `${Number.isInteger(Math.round(r * 100) / 100) ? Math.round(r) : (Math.round(r * 100) / 100).toString()} Hz`;
 const SNAP_PX        = 25;
-const DIAGRAM_HEIGHT = 220;
+const DIAGRAM_HEIGHT = 150;
 
 function parseRes(s: string): { w: number; h: number } {
   const m = s.match(/^(\d+)\s*[x×]\s*(\d+)/i);
@@ -194,7 +196,7 @@ function HourStepper({ value, onChange }: { value: number; onChange: (v: number)
     display: "flex", alignItems: "center", justifyContent: "center",
     width: 22, height: 22, borderRadius: 4,
     background: "#1e1e1e", border: "1px solid #2e2e2e",
-    color: "#9a9a9a", cursor: "pointer", fontSize: 13, lineHeight: 1,
+    color: "var(--color-text-dim)", cursor: "pointer", fontSize: 13, lineHeight: 1,
     userSelect: "none",
   };
   return (
@@ -240,7 +242,7 @@ function NightLightPanel() {
   if (!state) {
     return (
       <div className="content-scroll">
-        <p style={{ color: "#9a9a9a", padding: 24 }}>Reading Night Light…</p>
+        <p style={{ color: "var(--color-text-dim)", padding: 24 }}>Reading Night Light…</p>
       </div>
     );
   }
@@ -351,7 +353,7 @@ function NightLightPanel() {
                 value={state.manual_from}
                 onChange={v => update({ manual_from: v })}
               />
-              <span style={{ color: "#8a9ab0", fontSize: 14 }}>→</span>
+              <span style={{ color: "var(--color-text-muted)", fontSize: 14 }}>→</span>
               <HourStepper
                 value={state.manual_to}
                 onChange={v => update({ manual_to: v })}
@@ -360,7 +362,7 @@ function NightLightPanel() {
           </div>
         )}
       </div>
-      {msg && <p style={{ fontSize: 12, color: "#76b900",
+      {msg && <p style={{ fontSize: 12, color: "var(--color-gb)",
                           margin: "10px 24px 0" }}>{msg}</p>}
     </div>
   );
@@ -400,10 +402,19 @@ export function DisplaysView() {
     ? (selected.modes.find(m => m.resolution === selRes)?.rates ?? [])
     : [];
 
+  const changes: string[] = [];
+  if (selected) {
+    if (selRes !== selected.current_mode) changes.push("resolution");
+    if (Math.abs(selRate - selected.current_rate) > 0.01) changes.push("refresh rate");
+    if (rotation !== "normal") changes.push("orientation");
+    if (scale !== 100) changes.push("scale");
+  }
+
   const handleApply = async () => {
     if (!selected) return;
     setApplying(true); setApplyMsg(null);
     const messages: string[] = [];
+    const vrrWasOn = selected.vrr;
     try {
       messages.push(await invoke("apply_display_mode", {
         name: selected.name, resolution: selRes, rate: selRate
@@ -470,7 +481,17 @@ export function DisplaysView() {
     // at once (some of which may have partially failed above), and only
     // the compositor's own state is authoritative for the result.
     try {
-      const fresh = await invoke<DisplayInfo[]>("query_displays");
+      let fresh = await invoke<DisplayInfo[]>("query_displays");
+      // Applying a mode, rotation or layout is a modeset, and some of those
+      // paths used to drop the monitor back to its fixed refresh rate. If
+      // VRR was on before Apply, switch it back on instead of leaving the
+      // toggle silently off.
+      if (vrrWasOn && !fresh.find(d => d.name === selected.name)?.vrr) {
+        try {
+          await invoke("apply_display_vrr", { name: selected.name, enabled: true });
+          fresh = await invoke<DisplayInfo[]>("query_displays");
+        } catch { /* leave the toggle showing the real state */ }
+      }
       setDisplays(fresh);
       // Not selectDisplay() , it resets applyMsg to null as a side effect,
       // which would immediately wipe the success/error message set above.
@@ -520,7 +541,7 @@ export function DisplaysView() {
 
       {tab === "settings" && (
     <div className="content-scroll">
-      <div style={{ maxWidth: 780, margin: "0 auto" }}>
+      <div style={{ maxWidth: 780, margin: "0 auto", paddingBottom: 8 }}>
 
         {displays.length > 1 && (
           <>
@@ -531,7 +552,7 @@ export function DisplaysView() {
                   <div className="info-label" style={{ fontWeight: 600 }}>
                     Multi-monitor mode
                   </div>
-                  <div style={{ fontSize: 12, color: "#8a9ab0", marginTop: 4 }}>
+                  <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 4 }}>
                     {arrangement === "join"
                       ? "Each monitor shows independent content; arrange them in the diagram."
                       : "All monitors mirror the same image (resolution forced to highest common)."}
@@ -559,9 +580,9 @@ export function DisplaysView() {
                     layout={layout}
                     onLayoutChange={setLayout}
                   />
-                  <p style={{ fontSize: 11, color: "#8a9ab0",
+                  <p style={{ fontSize: 12, color: "var(--color-text-muted)",
                               marginTop: 8, lineHeight: 1.5 }}>
-                    Drag a monitor to reposition it.  Edges snap to
+                    Drag a monitor to move it. Edges snap to
                     neighbours within {SNAP_PX}px.  Click <b>Apply</b>{" "}
                     below to push the layout to xrandr.
                   </p>
@@ -572,13 +593,14 @@ export function DisplaysView() {
         )}
 
         <p className="section-title" style={{ marginTop: displays.length > 1 ? 24 : 0 }}>
-          Display Settings
+          Your monitors
         </p>
         <div className="display-cards-row">
           {displays.map((d, i) => (
-            <div
+            <button
               key={d.name}
               className={`display-card${selected?.name === d.name ? " selected" : ""}`}
+              aria-pressed={selected?.name === d.name}
               onClick={() => selectDisplay(d)}
             >
               <div className="display-card-icon">
@@ -590,22 +612,18 @@ export function DisplaysView() {
                   <text x="26" y="22" textAnchor="middle" fontSize="12" fill="currentColor" stroke="none" fontWeight="bold">{i + 1}</text>
                 </svg>
               </div>
-              <div className="display-card-name">{d.name}</div>
-              <div className="display-card-sub">{d.connector}</div>
-              {d.gsync_compatible && (
-                <div className="display-card-badge">G-SYNC Compatible</div>
-              )}
-              {d.primary && (
-                <div className="display-card-badge" style={{ background: "#1a3a1a" }}>Primary</div>
-              )}
-            </div>
+              <div className="display-card-text">
+                <div className="display-card-name">{d.name}{d.primary && <span className="display-card-badge">Primary</span>}</div>
+                <div className="display-card-sub">{d.current_mode.replace("x", "×")} at {fmtHz(d.current_rate)} · {d.connector}{d.gsync_compatible ? " · G-SYNC" : ""}</div>
+              </div>
+            </button>
           ))}
         </div>
 
         {selected && (
           <>
             <p className="section-title" style={{ marginTop: 24 }}>
-              Display Properties , {selected.name}
+              Settings for {selected.name}
             </p>
             <div className="section-card">
               <div style={{ display: "grid",
@@ -631,7 +649,7 @@ export function DisplaysView() {
                 </div>
 
                 <div>
-                  <div className="info-label" style={{ marginBottom: 8 }}>Refresh Rate</div>
+                  <div className="info-label" style={{ marginBottom: 8 }}>Refresh rate</div>
                   <select
                     className="gb-select"
                     value={selRate}
@@ -639,7 +657,7 @@ export function DisplaysView() {
                   >
                     {availableRates.map(r => (
                       <option key={r} value={r}>
-                        {r.toFixed(0)} Hz{r === selected.current_rate ? " (current)" : ""}
+                        {fmtHz(r)}{r === selected.current_rate ? " (current)" : ""}
                       </option>
                     ))}
                   </select>
@@ -667,10 +685,7 @@ export function DisplaysView() {
                     applications appear.
                   </div>
                 </div>
-                <div className={`toggle${selected.primary ? " on" : ""}`}>
-                  <div className="toggle-track" />
-                  <div className="toggle-thumb" />
-                </div>
+                <SwitchLook on={!!(selected.primary)} />
               </div>
 
               {(() => {
@@ -712,22 +727,17 @@ export function DisplaysView() {
                        }}>
                     <div>
                       <div className="toggle-label">
-                        Variable Refresh Rate (G-SYNC / FreeSync / Adaptive-Sync)
+                        Variable refresh rate (G-SYNC, FreeSync)
                       </div>
                       <div className="toggle-desc">
                         {capable
-                          ? "Detected on this output. Reduces tearing and stutter for variable frame-rate games."
-                          : "Not detected on this output. Toggle anyway to ask the driver / compositor."}
-                        {" "}Switching this re-negotiates the display link, so the
-                        screen goes black and the monitor may report “no signal”
-                        for a second or two before coming back. That is the
-                        modeset, not a crash.
+                          ? "Fewer tears and less stutter when the frame rate varies."
+                          : "Not detected on this monitor. You can still try."}
+                        {" "}Takes effect at once, without Apply. The screen goes
+                        black for a second or two. That is normal.
                       </div>
                     </div>
-                    <div className={`toggle${selected.vrr ? " on" : ""}`}>
-                      <div className="toggle-track" />
-                      <div className="toggle-thumb" />
-                    </div>
+                    <SwitchLook on={!!(selected.vrr)} />
                   </div>
                 );
               })()}
@@ -764,10 +774,7 @@ export function DisplaysView() {
                         : "Powered off , re-enable from the bottom of this card."}
                   </div>
                 </div>
-                <div className={`toggle${selected.enabled ? " on" : ""}`}>
-                  <div className="toggle-track" />
-                  <div className="toggle-thumb" />
-                </div>
+                <SwitchLook on={!!(selected.enabled)} />
               </div>
 
               <div style={{ marginTop: 20 }}>
@@ -791,25 +798,26 @@ export function DisplaysView() {
               </div>
               {selected.width_mm > 0 && (
                 <div className="info-row">
-                  <div className="info-label">Physical Size</div>
+                  <div className="info-label">Physical size</div>
                   <div className="info-value">{selected.width_mm} × {selected.height_mm} mm</div>
                 </div>
               )}
               {selected.gsync_compatible && (
                 <div className="info-row">
-                  <div className="info-label">Adaptive Sync</div>
+                  <div className="info-label">Adaptive sync</div>
                   <div className="info-value ok">G-SYNC Compatible / VRR</div>
                 </div>
               )}
             </div>
 
-            <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 16 }}>
+            <div className="apply-bar">
               <button className="btn-optimize" onClick={handleApply} disabled={applying}>
                 {applying ? "Applying…" : "Apply"}
               </button>
               <button
                 className="btn-component"
                 onClick={async () => {
+                  if (!window.confirm("Restore every monitor to its previous layout and mode?")) return;
                   setApplying(true); setApplyMsg(null);
                   try {
                     const msg: string = await invoke("restore_all_displays");
@@ -832,9 +840,11 @@ export function DisplaysView() {
                   }
                   setApplying(false);
                 }}>
-                Restore all displays
+                Restore previous layout
               </button>
-              {applyMsg && <span style={{ fontSize: 12, color: "#76b900" }}>{applyMsg}</span>}
+              <span role="status" style={{ fontSize: 12, color: applyMsg ? "#76b900" : changes.length ? "#e8a000" : "#8a9ab0" }}>
+                {applyMsg ?? (changes.length ? `Not applied yet: ${changes.join(", ")}` : "Nothing to apply")}
+              </span>
             </div>
           </>
         )}

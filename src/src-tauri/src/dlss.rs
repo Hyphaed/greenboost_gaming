@@ -62,7 +62,8 @@ pub fn restore_game_dlss(game_path: &Path) -> DlssUpdateResult {
 
     // Walk the game dir for any NVIDIA DLL we know about.
     let mut dll_paths: Vec<PathBuf> = Vec::new();
-    for entry in WalkDir::new(game_path).max_depth(10).into_iter().flatten() {
+    for entry in WalkDir::new(game_path).max_depth(10).into_iter()
+        .filter_entry(|e| !crate::scanner::is_backup_dir(e)).flatten() {
         let p = entry.path();
         if !p.is_file() { continue; }
         if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
@@ -238,7 +239,9 @@ pub fn update_game_dlss(game_path: &Path) -> DlssUpdateResult {
         return result;
     }
 
-    // Process each DLL via the Python backend.
+    // Cached copies (filled by step 1 of "Update DLSS") are used first; a
+    // fresh download only happens for a DLL the cache doesn't hold.
+    let cached = list_cached_dlls_impl().unwrap_or_default();
     for dll_path in found {
         let dll_name_lower = dll_path.file_name()
             .and_then(|n| n.to_str())
@@ -259,7 +262,10 @@ pub fn update_game_dlss(game_path: &Path) -> DlssUpdateResult {
         // over the same directory for two different purposes (persistent
         // cache vs. scratch space). Copy into the game now; keep the
         // cache copy untouched either way.
-        match python_download_dll(&dll_name_lower) {
+        let from_cache = cached_latest(&cached, &dll_name_lower)
+            .map(Ok)
+            .unwrap_or_else(|| python_download_dll(&dll_name_lower));
+        match from_cache {
             Err(e) => {
                 result.errors.push(format!("{dll_name_lower}: {e}"));
             }
@@ -330,6 +336,15 @@ pub fn update_game_dlss(game_path: &Path) -> DlssUpdateResult {
         }
     }
     result
+}
+
+/// Highest-version cached copy of `name` (lowercase), if the cache has one.
+fn cached_latest(cached: &[CachedDll], name: &str) -> Option<PathBuf> {
+    cached.iter()
+        .filter(|c| c.name.to_lowercase() == name && !c.path.is_empty()
+            && Path::new(&c.path).is_file())
+        .max_by(|a, b| version_lex_compare(&a.version, &b.version))
+        .map(|c| PathBuf::from(&c.path))
 }
 
 /// Compare two dotted version strings lexicographically by numeric
@@ -584,8 +599,16 @@ pub fn sync_dlss_library_streaming(channel: &Channel<String>)
     -> Result<i32, String>
 {
     // Snapshot current cached versions before the sync.
+    // list_cached_dlls_impl() returns one entry per (name, version), newest
+    // fetched first, so keep only the first (= current) entry per name.
+    // Collecting straight into a map let older versions overwrite the
+    // current one and printed every cached version as an "update".
+    let current_per_name = |all: Vec<CachedDll>| -> Vec<CachedDll> {
+        let mut seen = std::collections::HashSet::new();
+        all.into_iter().filter(|d| seen.insert(d.name.clone())).collect()
+    };
     let before: std::collections::HashMap<String, String> =
-        list_cached_dlls_impl().unwrap_or_default()
+        current_per_name(list_cached_dlls_impl().unwrap_or_default())
             .into_iter().map(|d| (d.name, d.version)).collect();
 
     let bootstrap = crate::py_bootstrap::py_bootstrap();
@@ -628,7 +651,7 @@ sys.exit(0 if err == 0 else 1)
     let _ = t_err.join();
 
     // Emit version-diff summary so the user can see old → new.
-    let after = list_cached_dlls_impl().unwrap_or_default();
+    let after = current_per_name(list_cached_dlls_impl().unwrap_or_default());
     if !after.is_empty() {
         let _ = channel.send(String::new());
         let _ = channel.send("─────────────────────────────────── version summary ───".to_string());
@@ -656,9 +679,18 @@ pub fn sync_and_update_dlss_streaming(
     let _ = channel.send("=== Step 1 / 2 , Fetching latest DLSS libraries from NVIDIA GitHub ===".to_string());
     let sync_code = sync_dlss_library_streaming(channel)?;
     if sync_code != 0 {
+        // A refresh that couldn't reach the network must not block applying
+        // what is already cached; only stop when there is nothing to apply.
+        let cached = list_cached_dlls_impl().unwrap_or_default();
+        if cached.is_empty() {
+            let _ = channel.send(String::new());
+            let _ = channel.send("[error]  Sync failed and nothing is cached yet , skipping game DLL update.".to_string());
+            return Ok(sync_code);
+        }
         let _ = channel.send(String::new());
-        let _ = channel.send("[error]  Sync failed , skipping game DLL update.".to_string());
-        return Ok(sync_code);
+        let _ = channel.send(format!(
+            "[warn]   Some libraries couldn't be refreshed. {} cached libraries will be used; anything not cached is downloaded.",
+            cached.len()));
     }
     let _ = channel.send(String::new());
     let _ = channel.send(format!("=== Step 2 / 2 , Updating game DLLs in {} ===",

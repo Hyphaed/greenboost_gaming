@@ -220,13 +220,13 @@ function FanCurveEditor({
     <div>
       <div style={{ display: "flex", alignItems: "center",
                     justifyContent: "space-between",
-                    fontSize: 12, color: "#9a9a9a",
+                    fontSize: 12, color: "var(--color-text-dim)",
                     padding: "0 2px 8px" }}>
         <div>
           {liveT != null && liveDuty != null ? (
             <>
               <span style={{ color: "#ffb347" }}>● </span>
-              Current: <strong style={{ color: "#e6e6e6" }}>{liveT}°C</strong>
+              Current: <strong style={{ color: "var(--color-text)" }}>{liveT}°C</strong>
               {" → target "}
               <strong style={{ color: "#ffb347" }}>{liveDuty}%</strong>
             </>
@@ -236,7 +236,7 @@ function FanCurveEditor({
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span>{points.length} points</span>
-          <span style={{ color: "#8a9ab0" }}>
+          <span style={{ color: "var(--color-text-muted)" }}>
             Click curve to add · drag to edit · Del to remove
           </span>
         </div>
@@ -275,8 +275,8 @@ function FanCurveEditor({
           <text key={`yl${p}`} x={PAD_L - 8} y={ys(p) + 3}
                 fill="#7a7a7a" fontSize={10} textAnchor="end">{p}%</text>
         ))}
-        <text x={PAD_L - 28} y={PAD_T + 4} fill="#7a7a7a"
-              fontSize={10} textAnchor="end">Duty</text>
+        <text x={PAD_L} y={PAD_T - 5} fill="#8a9ab0"
+              fontSize={10} textAnchor="start">Fan speed</text>
 
         {liveT != null && liveDuty != null && (
           <g pointerEvents="none">
@@ -349,7 +349,7 @@ function FanCurveEditor({
       </svg>
 
       {hint && (
-        <div style={{ marginTop: 6, fontSize: 11, color: "#e8a000" }}>{hint}</div>
+        <div style={{ marginTop: 6, fontSize: 12, color: "var(--color-amber)" }}>{hint}</div>
       )}
     </div>
   );
@@ -779,8 +779,8 @@ export function GpuProfileView() {
                 <span style={{ fontSize: 12 }}>{gpu.name}</span>
                 {gpu.compute_cap && gpu.compute_cap !== "," && (
                   <span style={{
-                    fontSize: 10, padding: "1px 6px",
-                    background: "rgba(118,185,0,0.15)", color: "#76b900",
+                    fontSize: 12, padding: "1px 6px",
+                    background: "rgba(118,185,0,0.15)", color: "var(--color-gb)",
                     borderRadius: 8, fontWeight: 600, marginLeft: 4,
                   }}>SM {gpu.compute_cap}</span>
                 )}
@@ -791,7 +791,8 @@ export function GpuProfileView() {
 
           {tab === "overclock" && (
             <>
-              <p className="section-title">Presets</p>
+              <p className="section-title" style={{ marginBottom: 4 }}>Start from a preset</p>
+              <p className="section-hint">Fills in the sliders below. Nothing changes on the card until you press Apply to GPU.</p>
               <div className="section-card">
                 <div style={{ display: "grid",
                               gridTemplateColumns: "repeat(3, 1fr)",
@@ -833,10 +834,10 @@ export function GpuProfileView() {
                         t.style.borderColor  = "#2a2a2a";
                       }}
                     >
-                      <div style={{ color: "#76b900", fontWeight: 600, fontSize: 13 }}>
+                      <div style={{ color: "var(--color-gb)", fontWeight: 600, fontSize: 13 }}>
                         {p.label}
                       </div>
-                      <div style={{ color: "#9a9a9a", fontSize: 11,
+                      <div style={{ color: "var(--color-text-dim)", fontSize: 12,
                                     lineHeight: 1.5, whiteSpace: "normal" }}>
                         {p.description}
                       </div>
@@ -848,15 +849,15 @@ export function GpuProfileView() {
               <div style={{ marginBottom: 20, display: "flex",
                             alignItems: "center", gap: 16 }}>
                 <button
-                  className="btn-optimize"
+                  className="btn-optimize btn-quiet"
                   onClick={handleAutoTune}
                   disabled={autoTuning || !gpu}
                   style={{ display: "flex", alignItems: "center", gap: 8 }}
                 >
                   <Icon.Zap />
-                  {autoTuning ? "Tuning…" : "Auto Tune"}
+                  {autoTuning ? "Tuning…" : "Auto tune"}
                 </button>
-                <div style={{ fontSize: 12, color: "#9a9a9a", lineHeight: 1.5 }}>
+                <div style={{ fontSize: 12, color: "var(--color-text-dim)", lineHeight: 1.5 }}>
                   Automatically detects your GPU generation and applies the
                   optimal core / memory offsets and fan curve.
                 </div>
@@ -875,7 +876,8 @@ export function GpuProfileView() {
                 </div>
               )}
 
-              <p className="section-title">Overclocking</p>
+              <p className="section-title" style={{ marginBottom: 4 }}>Clock offsets</p>
+              <p className="section-hint">Raise in small steps. Too high can crash a game.</p>
               <div className="section-card">
                 <div className="slider-row">
                   <div className="slider-label">
@@ -903,7 +905,7 @@ export function GpuProfileView() {
                 </div>
               </div>
 
-              <p className="section-title">Power Limit</p>
+              <p className="section-title">Power limit</p>
               <div className="section-card">
                 <div className="slider-row">
                   <div className="slider-label">
@@ -920,27 +922,27 @@ export function GpuProfileView() {
                 </div>
               </div>
 
-              <div style={{ marginTop: 20, display: "flex",
-                            alignItems: "center", gap: 16 }}>
+              <div className="apply-bar">
                 <button className="btn-optimize"
                         onClick={handleApply} disabled={applying}>
-                  {applying ? "Applying…" : "Apply Profile"}
+                  {applying ? "Applying…" : "Apply to GPU"}
                 </button>
-                {applyMsg && (
-                  <span style={{ fontSize: 12, color: "#76b900" }}>{applyMsg}</span>
-                )}
+                <span role="status" style={{ fontSize: 12, color: applyMsg ? "#76b900" : "#8a9ab0" }}>
+                  {applyMsg ?? "Slider changes are not applied yet."}
+                </span>
               </div>
             </>
           )}
 
           {tab === "fan-curve" && (
             <>
-              <p className="section-title">Fan Profile</p>
+              <p className="section-title" style={{ marginBottom: 4 }}>Fan curve</p>
+              <p className="section-hint">A preset starts the fan curve right away. Edits to the curve need Apply.</p>
 
               <div style={{ display: "flex", alignItems: "center",
                             gap: 10, marginBottom: 16 }}>
                 <button
-                  className="btn-optimize"
+                  className="btn-optimize btn-quiet"
                   onClick={handleFanAutoTune}
                   disabled={!gpu || fanTestRunning}
                   style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}
@@ -985,11 +987,11 @@ export function GpuProfileView() {
                   background: "#1a1a1a", border: "1px solid #2a2a2a",
                   borderRadius: 8, flex: 1, minWidth: 0,
                 }}>
-                  <span style={{ fontSize: 11, color: "#9a9ab0",
+                  <span style={{ fontSize: 12, color: "#9a9ab0",
                                  flexShrink: 0, whiteSpace: "nowrap" }}>
                     Fan speed
                   </span>
-                  <div style={{ flex: 1, height: 6, background: "#2a2a2a",
+                  <div style={{ flex: 1, height: 6, background: "var(--color-line)",
                                 borderRadius: 99, overflow: "hidden" }}>
                     <div style={{
                       height: "100%",
@@ -1032,7 +1034,7 @@ export function GpuProfileView() {
                     <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
                       <button
                         style={{
-                          fontSize: 11, padding: "4px 10px",
+                          fontSize: 12, padding: "4px 10px",
                           background: "transparent",
                           border: `1px solid ${isInfo ? "#76b900" : "#e05252"}`,
                           borderRadius: 4,
@@ -1095,14 +1097,14 @@ export function GpuProfileView() {
                           <span style={{
                             marginLeft: "auto",
                             background: "rgba(118,185,0,0.15)",
-                            color: "#76b900", fontSize: 9,
+                            color: "var(--color-gb)", fontSize: 12,
                             fontWeight: 700, padding: "2px 6px",
                             borderRadius: 10, letterSpacing: 0.5,
                             textTransform: "uppercase",
                           }}>Active</span>
                         )}
                       </div>
-                      <div style={{ color: "#8a9ab0", fontSize: 11,
+                      <div style={{ color: "var(--color-text-muted)", fontSize: 12,
                                     lineHeight: 1.5, whiteSpace: "normal" }}>
                         {p.description}
                       </div>
@@ -1160,7 +1162,7 @@ export function GpuProfileView() {
 
                 <div style={{ marginLeft: "auto", display: "flex",
                               alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 12, color: "#9a9a9a" }}>
+                  <span style={{ fontSize: 12, color: "var(--color-text-dim)" }}>
                     {fanAuto ? "Auto (driver)" : "Custom curve"}
                   </span>
                   <div onClick={() => { setFanAuto(v => !v); }}
@@ -1183,7 +1185,7 @@ export function GpuProfileView() {
               </div>
 
               {selectedProfile === "__default" && (
-                <div style={{ fontSize: 11, color: "#e8a000",
+                <div style={{ fontSize: 12, color: "var(--color-amber)",
                               marginBottom: 6, padding: "4px 0" }}>
                   Default profile , read-only. Select Custom to edit.
                 </div>
@@ -1201,7 +1203,7 @@ export function GpuProfileView() {
                 />
               </div>
 
-              <p style={{ fontSize: 11, color: "#8a9ab0",
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)",
                           marginTop: 10, lineHeight: 1.5 }}>
                 Drag anchor points to reshape the curve · click empty area to add ·
                 click the red × on a selected point to remove.
@@ -1209,17 +1211,14 @@ export function GpuProfileView() {
                 <code> nvidia-settings</code> (X11 / XWayland).
               </p>
 
-              <div style={{ marginTop: 16, display: "flex",
-                            alignItems: "center", gap: 16,
-                            padding: "12px 0",
-                            borderTop: "1px solid #2a2a2a" }}>
+              <div className="apply-bar">
                 <button className="btn-optimize"
                         onClick={handleApply} disabled={applying}>
-                  {applying ? "Applying…" : "Apply"}
+                  {applying ? "Applying…" : "Apply curve"}
                 </button>
                 {!fanAuto && fanDaemonRef.current && (
                   <button className="btn-component"
-                          style={{ borderColor: "#e05252", color: "#e05252" }}
+                          style={{ borderColor: "var(--color-red)", color: "var(--color-text-error)" }}
                           onClick={() => {
                             stopFanDaemon();
                             invoke("fan_auto").catch(console.error);
@@ -1230,7 +1229,7 @@ export function GpuProfileView() {
                   </button>
                 )}
                 {applyMsg && (
-                  <span style={{ fontSize: 12, color: "#76b900" }}>{applyMsg}</span>
+                  <span role="status" style={{ fontSize: 12, color: "var(--color-gb)" }}>{applyMsg}</span>
                 )}
               </div>
             </>
@@ -1249,7 +1248,7 @@ export function GpuProfileView() {
                     style={{
                       flex: 1, padding: "8px 12px",
                       background: "#1a1a1a", border: "1px solid #2a2a2a",
-                      borderRadius: 6, color: "#e6e6e6", fontSize: 13,
+                      borderRadius: 6, color: "var(--color-text)", fontSize: 13,
                     }}
                   />
                   <button className="btn-component"
@@ -1258,7 +1257,7 @@ export function GpuProfileView() {
                     Save
                   </button>
                 </div>
-                <p style={{ fontSize: 11, color: "#8a9ab0", marginTop: 8 }}>
+                <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 8 }}>
                   Stored at{" "}
                   <code>~/.config/greenboost-gaming/profiles/&lt;name&gt;.json</code>
                 </p>
@@ -1269,7 +1268,7 @@ export function GpuProfileView() {
               </p>
               <div className="section-card">
                 {profileNames.length === 0 ? (
-                  <p style={{ color: "#8a9ab0" }}>
+                  <p style={{ color: "var(--color-text-muted)" }}>
                     No profiles saved yet. Tune Overclocking + Fan Curve
                     above, then save one.
                   </p>
@@ -1280,7 +1279,7 @@ export function GpuProfileView() {
                     return (
                       <div key={name} className="info-row"
                            style={{
-                             gap: 8,
+                             display: "flex", alignItems: "center", gap: 8,
                              background: isSelected ? "rgba(118,185,0,0.05)" : "transparent",
                              borderRadius: 4,
                              margin: isSelected ? "0 -8px" : "0",
@@ -1302,30 +1301,31 @@ export function GpuProfileView() {
                           {isActive && (
                             <span style={{
                               background: "rgba(118,185,0,0.15)",
-                              color: "#76b900",
-                              fontSize: 10, fontWeight: 600,
+                              color: "var(--color-gb)",
+                              fontSize: 12, fontWeight: 600,
                               padding: "2px 8px", borderRadius: 10,
                               letterSpacing: 0.5, textTransform: "uppercase",
                             }}>Active</span>
                           )}
                         </div>
                         <button className="btn-component"
-                                onClick={() => loadProfile(name)}>
-                          Load
+                                onClick={() => loadProfile(name)}
+                                title="Put this profile's values into the sliders and fan curve. Nothing is applied until you press Apply.">
+                          Load into sliders
                         </button>
                         <button className="btn-component"
                                 onClick={() => setActive(isActive ? null : name)}
                                 title={isActive
                                   ? "Stop the fan daemon from following this profile"
                                   : "Tell the fan daemon to follow this profile's curve"}>
-                          {isActive ? "Deactivate" : "Activate"}
+                          {isActive ? "Stop fan daemon use" : "Use for fan daemon"}
                         </button>
                       </div>
                     );
                   })
                 )}
                 {activeProfile && profileNames.length > 0 && (
-                  <p style={{ fontSize: 11, color: "#8a9ab0",
+                  <p style={{ fontSize: 12, color: "var(--color-text-muted)",
                               margin: "14px 0 0", lineHeight: 1.5 }}>
                     Fan daemon is following <b>{activeProfile}</b>.
                     Make sure <code>gb-gaming-fan-daemon</code> is enabled:{" "}
@@ -1333,7 +1333,7 @@ export function GpuProfileView() {
                   </p>
                 )}
                 {profileMsg && (
-                  <p style={{ fontSize: 12, color: "#76b900",
+                  <p style={{ fontSize: 12, color: "var(--color-gb)",
                               marginTop: 12 }}>{profileMsg}</p>
                 )}
               </div>
@@ -1353,19 +1353,19 @@ export function GpuProfileView() {
                     </p>
                     <div className="section-card" style={{ marginTop: 8 }}>
                       {bindingsLoading ? (
-                        <p style={{ color: "#8a9ab0", fontSize: 12 }}>
+                        <p style={{ color: "var(--color-text-muted)", fontSize: 12 }}>
                           Loading game bindings…
                         </p>
                       ) : noGamesAtAll ? (
-                        <p style={{ color: "#8a9ab0", fontSize: 12, lineHeight: 1.5 }}>
+                        <p style={{ color: "var(--color-text-muted)", fontSize: 12, lineHeight: 1.5 }}>
                           No games found , launch Steam to scan your library.
                         </p>
                       ) : (
                         <>
                           {boundGames.length === 0 && (
-                            <p style={{ color: "#8a9ab0", fontSize: 12,
+                            <p style={{ color: "var(--color-text-muted)", fontSize: 12,
                                         marginBottom: unboundGames.length > 0 ? 12 : 0 }}>
-                              No games bound to <b style={{ color: "#e6e6e6" }}>{selectedProfile}</b> yet.
+                              No games bound to <b style={{ color: "var(--color-text)" }}>{selectedProfile}</b> yet.
                             </p>
                           )}
 
@@ -1382,10 +1382,10 @@ export function GpuProfileView() {
                               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                 <span style={{
                                   display: "inline-block", width: 8, height: 8,
-                                  borderRadius: "50%", background: "#76b900",
+                                  borderRadius: "50%", background: "var(--color-gb)",
                                   flexShrink: 0,
                                 }} />
-                                <span style={{ fontSize: 13, color: "#e6e6e6" }}>
+                                <span style={{ fontSize: 13, color: "var(--color-text)" }}>
                                   {g.name}
                                 </span>
                               </div>
@@ -1396,7 +1396,7 @@ export function GpuProfileView() {
                                   background: "transparent",
                                   border: "1px solid #3a3a3a",
                                   borderRadius: 4,
-                                  color: "#9a9a9a",
+                                  color: "var(--color-text-dim)",
                                   cursor: "pointer",
                                   fontSize: 13,
                                   lineHeight: 1,
@@ -1447,7 +1447,7 @@ export function GpuProfileView() {
                           )}
 
                           {unboundGames.length === 0 && boundGames.length > 0 && (
-                            <p style={{ fontSize: 11, color: "#8a9ab0",
+                            <p style={{ fontSize: 12, color: "var(--color-text-muted)",
                                         marginTop: 10, lineHeight: 1.5 }}>
                               All scanned games are already bound to this profile.
                             </p>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { SwitchLook } from "./Toggle";
 import { invoke } from "@tauri-apps/api/core";
 import type { Game, GameOverrides, PreflightCheck, Dlss5EnableResult, Dlss5Config,
   Dlss5SimpleResult, ExternalDll, FileResult } from "../types";
@@ -78,10 +79,10 @@ function Dlss5Slider({
           onTouchEnd={() => onCommit(String(live))}
           style={{ width: 110 }}
         />
-        <span style={{ width: 42, textAlign: "right", fontSize: 11, color: "#c8d0da" }}>
+        <span style={{ width: 42, textAlign: "right", fontSize: 12, color: "#c8d0da" }}>
           {isAuto ? "auto" : live.toFixed(2)}
         </span>
-        <button className="btn-revert" style={{ padding: "2px 7px", fontSize: 10 }}
+        <button className="btn-revert" style={{ padding: "2px 7px", fontSize: 12 }}
           disabled={disabled}
           onClick={() => onCommit(isAuto ? String(seed) : "auto")}>
           {isAuto ? "set" : "auto"}
@@ -102,11 +103,8 @@ function Dlss5Toggle({ label, value, onCommit, disabled, info }: {
         <div className="gs-row-title" style={{ fontSize: 12 }}>{label}{info && <InfoTip>{info}</InfoTip>}</div>
       </div>
       <div className="gs-row-control">
-        <div className={`toggle${on ? " on" : ""}`}
-          onClick={disabled ? undefined : () => onCommit(on ? "false" : "true")}
-          style={{ cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1 }}>
-          <div className="toggle-track" /><div className="toggle-thumb" />
-        </div>
+        <SwitchLook on={on} label={label} disabled={disabled}
+          onClick={disabled ? undefined : () => onCommit(on ? "false" : "true")} />
       </div>
     </div>
   );
@@ -154,7 +152,7 @@ function Dlss5HowItWorksModal({ onClose }: { onClose: () => void }) {
         }}
         onClick={e => e.stopPropagation()}
       >
-        <div style={{ fontWeight: 600, fontSize: 14, color: "#e6e6e6", marginBottom: 10 }}>
+        <div style={{ fontWeight: 600, fontSize: 14, color: "var(--color-text)", marginBottom: 10 }}>
           How DLSS 5 (Neural Rendering) works in GreenBoost
         </div>
         <div style={{ fontSize: 12, color: "#c8d0da", lineHeight: 1.6, display: "flex",
@@ -220,10 +218,10 @@ export function Dlss5Panel({
   const [copyMsg, setCopyMsg]       = useState<string | null>(null);
 
   useEffect(() => {
-    invoke<string | null>("resolve_game_exe_dir", { gameDir: game.path })
+    invoke<string | null>("resolve_game_exe_dir", { appid, gameDir: game.path })
       .then(setTargetDir)
       .catch(() => setTargetDir(null));
-  }, [game.path]);
+  }, [appid, game.path]);
 
   const runPreflight = useCallback(() => {
     if (!targetDir || !appid) { setPreflight([]); return; }
@@ -281,27 +279,42 @@ export function Dlss5Panel({
     await commitConfig("FrameGen.FGOutput", off ? "nofg" : "dlssg");
   }, [commitConfig]);
 
-  // No auto-seeding here on purpose , see the warning on this toggle below.
-  // This used to also pick "Native" (dlssg) the first time Frame Generation
-  // was switched on; real testing on 007 First Light showed Frame
-  // Generation forced on alongside Neural Rendering produces pink/magenta
-  // image corruption, not the "everything works from one toggle" result
-  // this was meant to be. Left as a plain pass-through , picking a source
-  // is now a separate, deliberate choice via the Source control below.
+  // Turning this on for the first time also picks "Native" (dlssg) below,
+  // so this one toggle is enough , there's no second switch to find.
+  //
+  // This was briefly removed (2026-09-02) after Frame Generation looked like
+  // the cause of a severe image-corruption bug on 007 First Light. It
+  // wasn't , the real cause was a build bug in the DLSS 5 runtime itself
+  // (GPU architecture reporting for Frame Generation, unrelated to whether
+  // Frame Generation was even on), found by diff review and fixed the same
+  // day. See libraries/dlssnr/FORK_NOTES.md for the full account, including
+  // the wrong first fix attempt. Restored once the real fix was confirmed by
+  // a real playtest.
   const commitFrameGenEnabled = useCallback(async (v: string) => {
     await commitConfig("FrameGen.Enabled", v);
-  }, [commitConfig]);
+    if (v === "true") {
+      const cur = config["FrameGen.FGInput"];
+      if (!cur || cur === "auto" || cur === "nofg") {
+        await commitFgSource("dlssg");
+      }
+    }
+  }, [commitConfig, commitFgSource, config]);
 
-  // No auto-seeding here on purpose , see the warning on the toggle below.
-  // This used to also pick Preset M the first time the override was turned
-  // on; real testing on 007 First Light showed that combination (a forced
-  // non-default SR preset + Neural Rendering, both on) produces severe
-  // image corruption, not the ghosting fix it was meant to be. Left as a
-  // plain pass-through so a user who wants to experiment picks a preset
-  // deliberately, with the warning already read.
+  // Turning this on for the first time also picks Preset M below , NVIDIA's
+  // current transformer-model preset, the one this fork's own testing found
+  // suppresses ghosting on 007 First Light. Same history as the Frame
+  // Generation toggle above: briefly removed as a suspect in the corruption
+  // bug, restored once the real cause (a build bug, not this setting) was
+  // found and fixed , see libraries/dlssnr/FORK_NOTES.md.
   const commitDlssPresetOverride = useCallback(async (v: string) => {
     await commitConfig("DLSS.RenderPresetOverride", v);
-  }, [commitConfig]);
+    if (v === "true") {
+      const cur = config["DLSS.RenderPresetForAll"];
+      if (!cur || cur === "auto" || cur === "0") {
+        await commitConfig("DLSS.RenderPresetForAll", "13");
+      }
+    }
+  }, [commitConfig, config]);
 
   const doEnable = useCallback(async () => {
     if (!appid || !targetDir) return;
@@ -456,18 +469,18 @@ export function Dlss5Panel({
           display: "flex", justifyContent: "space-between", alignItems: "flex-start",
           gap: 10, padding: "8px 16px 0", flexWrap: "wrap",
         }}>
-          <p style={{ fontSize: 11, color: "#8a9ab0", lineHeight: 1.5, margin: 0, flex: "1 1 260px" }}>
+          <p style={{ fontSize: 12, color: "var(--color-text-muted)", lineHeight: 1.5, margin: 0, flex: "1 1 260px" }}>
             Installs GreenBoost's own DLSS Neural Rendering runtime and turns it on
             directly , no in-game menu to open, no checkbox to
             find.{GS_INFO["DLSS 5 (Neural Rendering)"] &&
               <InfoTip>{GS_INFO["DLSS 5 (Neural Rendering)"]}</InfoTip>}
           </p>
           <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-            <button className="btn-revert" style={{ padding: "4px 10px", fontSize: 11 }}
+            <button className="btn-revert" style={{ padding: "4px 10px", fontSize: 12 }}
               onClick={() => setShowHowItWorks(true)}>
               How it works?
             </button>
-            <button className="btn-revert" style={{ padding: "4px 10px", fontSize: 11 }}
+            <button className="btn-revert" style={{ padding: "4px 10px", fontSize: 12 }}
               onClick={() => setBrowsingAssetDir(true)}>
               Select DLSS5 folder
             </button>
@@ -475,7 +488,7 @@ export function Dlss5Panel({
         </div>
 
         {!targetDir && (
-          <p style={{ fontSize: 11, color: "#e8a000", padding: "8px 16px" }}>
+          <p style={{ fontSize: 12, color: "var(--color-amber)", padding: "8px 16px" }}>
             Could not determine this game's executable directory automatically ,
             it has zero or more than one candidate .exe.
           </p>
@@ -493,18 +506,15 @@ export function Dlss5Panel({
                 </div>
               </div>
               <div className="gs-row-control">
-                <div className={`toggle${enabled ? " on" : ""}`}
-                  onClick={busy ? undefined : toggle}
-                  style={{ cursor: busy ? "wait" : "pointer" }}>
-                  <div className="toggle-track" /><div className="toggle-thumb" />
-                </div>
+                <SwitchLook on={enabled} label="Enable DLSS 5" disabled={busy}
+                  onClick={busy ? undefined : toggle} />
               </div>
             </div>
 
             <div style={{ padding: "0 16px 10px" }}>
               {preflight.map((c, i) => (
                 <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start",
-                  fontSize: 11, padding: "3px 0" }}>
+                  fontSize: 12, padding: "3px 0" }}>
                   <span style={{
                     color: c.ok ? "#76b900" : c.level === "warn" ? "#e8a000" : "#e05252",
                     flexShrink: 0, width: 14,
@@ -512,17 +522,17 @@ export function Dlss5Panel({
                     {c.ok ? "✓" : c.level === "warn" ? "!" : "✗"}
                   </span>
                   <span style={{ color: "#c8d0da", flexShrink: 0 }}>{c.check}:</span>
-                  <span style={{ color: "#8a9ab0" }}>{c.detail}</span>
+                  <span style={{ color: "var(--color-text-muted)" }}>{c.detail}</span>
                 </div>
               ))}
             </div>
 
             {msg && (
-              <p style={{ fontSize: 11, color: "#8a9ab0", padding: "0 16px 10px" }}>{msg}</p>
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)", padding: "0 16px 10px" }}>{msg}</p>
             )}
 
             <div style={{
-              padding: "6px 16px 4px", fontSize: 10, color: "#6a7688",
+              padding: "6px 16px 4px", fontSize: 12, color: "#6a7688",
               textTransform: "uppercase", letterSpacing: 0.4, borderTop: "1px solid #232323",
               marginTop: 4,
             }}>
@@ -531,42 +541,45 @@ export function Dlss5Panel({
             <Dlss5Toggle label="Override DLSS's preset" value={config["DLSS.RenderPresetOverride"]}
               disabled={cfgDisabled} onCommit={commitDlssPresetOverride}
               info={<>
-                <p style={{ margin: "0 0 8px", color: "#e8a000" }}><strong>Tested on 007 First
-                  Light and it broke the picture</strong> , not ghosting, severe corruption
-                  (blown-out highlights, a magenta cast, vertical noise). Neural Rendering here
-                  is unofficial and was only ever confirmed working under this game's own
-                  default preset; forcing a different one at the same time changes what Super
-                  Resolution hands to it in a way Neural Rendering doesn't cope with. If you
-                  turn this on and the picture looks broken rather than just soft, turn it back
-                  off immediately , that's this bug, not new damage.</p>
-                <p style={{ margin: 0 }}>Trailing or smearing behind moving objects is usually
-                  DLSS Super Resolution's own preset, not Neural Rendering , NR only refines
-                  whatever Super Resolution already produced, and has no temporal-accumulation
-                  control of its own to fix ghosting with. This control exists for deliberate
-                  experimentation with that, one game at a time , it's no longer applied
-                  automatically, and picks no preset for you.</p>
+                <p style={{ margin: "0 0 8px" }}>Trailing or smearing behind moving objects is
+                  usually DLSS Super Resolution's own preset, not Neural Rendering , NR only
+                  refines whatever Super Resolution already produced, and has no
+                  temporal-accumulation control of its own to fix ghosting with. Turning this on
+                  for the first time also picks Preset M below.</p>
+                <p style={{ margin: 0, color: "#6a7688" }}>A severe image-corruption bug (blown
+                  highlights, a magenta cast, vertical noise) showed up on 007 First Light while
+                  diagnosing this , this control was wrongly suspected for a while, since
+                  turning it off didn't fix it either. The real cause turned out to be a bug in
+                  the DLSS 5 runtime build itself (GPU architecture reporting for Frame
+                  Generation, unrelated to presets), fixed and rebuilt , see
+                  `libraries/dlssnr/FORK_NOTES.md` for the full account. This control is not what
+                  was wrong.</p>
               </>} />
             <Dlss5Select label="Preset" value={config["DLSS.RenderPresetForAll"]}
               disabled={cfgDisabled} onCommit={v => commitConfig("DLSS.RenderPresetForAll", v)}
-              note="Only used when Override DLSS's preset (above) is on. Untested alongside
-                Neural Rendering , see the warning above before picking anything but auto."
-              info="M is NVIDIA's 2nd-generation transformer model , generally the
-                lowest-ghosting choice on its own, without Neural Rendering also enabled.
-                K is a faster fallback if M costs too much performance. Letters before J
-                are older CNN-based presets predating the transformer model."
+              note="Only used when Override DLSS's preset (above) is on."
+              info="M is NVIDIA's 2nd-generation transformer model , widely reported
+                (outside this project) as the lowest-ghosting DLSS Super Resolution preset
+                on its own, without Neural Rendering involved. Not something this project
+                has verified itself on 007 First Light , the one real test run here never
+                confirmed DLSS Super Resolution was even active in-game (see
+                `libraries/dlssnr/FORK_NOTES.md`), so treat this as a reasonable starting
+                point, not a measured result. K is a faster fallback if M costs too much
+                performance. Letters before J are older CNN-based presets predating the
+                transformer model."
               options={[
                 { v: "0", label: "Game's own default" },
                 ...["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O"]
                   .map((letter, i) => ({
                     v: String(i + 1),
-                    label: letter === "M" ? "M (recommended , fixes ghosting)"
-                         : letter === "K" ? "K (faster, still low ghosting)"
+                    label: letter === "M" ? "M (recommended)"
+                         : letter === "K" ? "K (faster fallback)"
                          : letter,
                   })),
               ]} />
 
             <div style={{
-              padding: "6px 16px 4px", fontSize: 10, color: "#6a7688",
+              padding: "6px 16px 4px", fontSize: 12, color: "#6a7688",
               textTransform: "uppercase", letterSpacing: 0.4, borderTop: "1px solid #232323",
               marginTop: 8,
             }}>
@@ -653,7 +666,7 @@ export function Dlss5Panel({
               ]} />
 
             <div style={{
-              padding: "6px 16px 4px", fontSize: 10, color: "#6a7688",
+              padding: "6px 16px 4px", fontSize: 12, color: "#6a7688",
               textTransform: "uppercase", letterSpacing: 0.4, borderTop: "1px solid #232323",
               marginTop: 8,
             }}>
@@ -662,20 +675,21 @@ export function Dlss5Panel({
             <Dlss5Toggle label="DLSS Frame Generation" value={config["FrameGen.Enabled"]}
               disabled={cfgDisabled} onCommit={commitFrameGenEnabled}
               info={<>
-                <p style={{ margin: "0 0 8px", color: "#e8a000" }}><strong>Tested on 007 First
-                  Light alongside Neural Rendering and it corrupted the picture</strong> , a
-                  pink/magenta cast, not the framerate boost this is meant to be. The user's
-                  original report, before this was ever forced on, was ghosting only , a much
-                  milder issue , which is what points at Frame Generation rather than Neural
-                  Rendering itself. Pink/magenta corruption specifically from DLSS Frame
-                  Generation is also independently reported in unrelated games. If you turn
-                  this on and the picture goes wrong rather than just faster, turn it back off.</p>
-                <p style={{ margin: 0 }}>NVIDIA's DLSS Frame Generation inserts an AI-generated
-                  frame between two rendered ones to raise the framerate you see, on top of
-                  whatever DLSS Super Resolution and Neural Rendering already produced. Needs
-                  DLSS already active in the game's own graphics menu. This control is for
-                  deliberate, one-game-at-a-time experimentation , it no longer picks a source
-                  for you; use the Source control below once you turn this on.</p>
+                <p style={{ margin: "0 0 8px" }}>NVIDIA's DLSS Frame Generation inserts an
+                  AI-generated frame between two rendered ones to raise the framerate you see,
+                  on top of whatever DLSS Super Resolution and Neural Rendering already
+                  produced. Needs DLSS already active in the game's own graphics menu. Turning
+                  this on for the first time also picks Native below, so this one toggle is
+                  enough , there's no second switch to find.</p>
+                <p style={{ margin: 0, color: "#6a7688" }}>A severe image-corruption bug
+                  (pink/magenta cast) showed up on 007 First Light while diagnosing this ,
+                  this control was wrongly suspected for a while, since the user's original
+                  report (before this was ever tested) was ghosting only, a much milder issue.
+                  The real cause turned out to be a build bug in the DLSS 5 runtime itself (how
+                  it reports GPU architecture for Frame Generation's own capability check,
+                  unrelated to whether Frame Generation is actually toggled on), fixed and
+                  rebuilt , see `libraries/dlssnr/FORK_NOTES.md` for the full account. This
+                  control is not what was wrong.</p>
               </>} />
             <Dlss5Select label="Source" value={config["FrameGen.FGInput"]}
               disabled={cfgDisabled} onCommit={commitFgSource}
@@ -705,7 +719,7 @@ export function Dlss5Panel({
               ]} />
 
             <div style={{
-              padding: "6px 16px 4px", fontSize: 10, color: "#6a7688",
+              padding: "6px 16px 4px", fontSize: 12, color: "#6a7688",
               textTransform: "uppercase", letterSpacing: 0.4, borderTop: "1px solid #232323",
               marginTop: 8,
             }}>
@@ -765,13 +779,13 @@ export function Dlss5Panel({
                 without lowering latency on its own. 0 means no limit." />
 
             <div style={{
-              padding: "6px 16px 4px", fontSize: 10, color: "#6a7688",
+              padding: "6px 16px 4px", fontSize: 12, color: "#6a7688",
               textTransform: "uppercase", letterSpacing: 0.4, borderTop: "1px solid #232323",
               marginTop: 8,
             }}>
               Advanced , DLL overlay
             </div>
-            <p style={{ fontSize: 11, color: "#8a9ab0", padding: "0 16px 6px", lineHeight: 1.5 }}>
+            <p style={{ fontSize: 12, color: "var(--color-text-muted)", padding: "0 16px 6px", lineHeight: 1.5 }}>
               If the folder above also holds regular Streamline files ({"sl.*.dll"},{" "}
               {"nvngx_dlss*.dll"}), they're offered here for the game's own DLL overlay ,
               a separate mechanism from the Neural Rendering runtime, for updating
@@ -780,7 +794,7 @@ export function Dlss5Panel({
             </p>
 
             {!gameOverrides.external_dll_dir && (
-              <p style={{ fontSize: 11, color: "#8a9ab0", padding: "0 16px 8px" }}>
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)", padding: "0 16px 8px" }}>
                 No folder selected yet , use "Select DLSS5 folder" above.
               </p>
             )}
@@ -807,8 +821,8 @@ export function Dlss5Panel({
                           {" · "}{d.version}
                           {shipped
                             ? <> {" · "}game ships {shipped.version || "unknown"} <span style={{ color: "#a5b4fc" }}>→ {d.version}</span></>
-                            : <> {" · "}<span style={{ color: "#e8a000" }}>not used by this game , no code path calls it</span></>}
-                          {isDisabled && <> {" · "}<span style={{ color: "#8a9ab0" }}>excluded</span></>}
+                            : <> {" · "}<span style={{ color: "var(--color-amber)" }}>not used by this game , no code path calls it</span></>}
+                          {isDisabled && <> {" · "}<span style={{ color: "var(--color-text-muted)" }}>excluded</span></>}
                         </div>
                       </div>
                       <div className="gs-row-control">
@@ -861,7 +875,7 @@ export function Dlss5Panel({
             </div>
 
             {copyMsg && (
-              <p style={{ fontSize: 11, color: "#8a9ab0", padding: "0 16px 8px" }}>
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)", padding: "0 16px 8px" }}>
                 {copyMsg}
               </p>
             )}

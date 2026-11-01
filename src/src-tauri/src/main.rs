@@ -631,7 +631,8 @@ fn poll_gpu_metrics() -> GpuMetrics {
             vram_total_mb: s.mem_total.map(|b| b >> 20),
             fan_pct:       s.fan_speed_avg(),
             throttle_reasons: s.throttle_bits
-                .map(|b| crate::nvml_reader::throttle_reasons(b)
+                .map(|b| crate::nvml_reader::effective_throttle_reasons(
+                            b, s.gpu_util, s.power_mw, s.power_limit_mw)
                         .into_iter().map(str::to_string).collect())
                 .unwrap_or_default(),
             throttle_known: s.throttle_bits.is_some(),
@@ -945,8 +946,8 @@ fn resolve_primary_exe(game_dir: String) -> Option<String> {
 /// own: that only looks inside a directory it's already given, and for a
 /// launcher-stub layout `selected.path` (the Steam install root) isn't it.
 #[tauri::command]
-fn resolve_game_exe_dir(game_dir: String) -> Option<String> {
-    backend_resolve_game_exe_dir(std::path::Path::new(&game_dir))
+fn resolve_game_exe_dir(appid: String, game_dir: String) -> Option<String> {
+    backend_resolve_game_exe_dir(&appid, std::path::Path::new(&game_dir))
         .map(|p| p.to_string_lossy().to_string())
 }
 

@@ -3123,7 +3123,16 @@ pub fn launch_game_ext(appid: &str, disable_secondary_displays: bool)
     let silent = crate::global_settings::get_impl()
         .map(|s| s.steam_silent_launch)
         .unwrap_or(true);
-    let steam_was_up = steam_is_running();
+    // `steam_was_up` means "already had a ready client", not merely "some
+    // steam process exists" , see steam_accepts_launches() for why that
+    // distinction is the whole fix here.
+    let steam_was_up = steam_accepts_launches();
+
+    const SIGNED_OUT_MSG: &str =
+        "Steam is running but signed out, so it accepts launches and \
+         drops them. Nothing is wrong with the game, the Proton mapping or \
+         GreenBoost , the launch never gets past Steam.\n\n\
+         Open Steam and sign in, then launch again:  steam steam://open/main";
 
     // A signed-out client is up, answers, and drops the request. Sending the
     // launch anyway costs the user the whole 3-minute budget and ends in an
@@ -3131,25 +3140,48 @@ pub fn launch_game_ext(appid: &str, disable_secondary_displays: bool)
     // name the actual reason instead. Only a definite signed-out state stops
     // the launch: Unknown proceeds exactly as before.
     if steam_was_up && steam_login_state() == SteamLogin::Off {
-        return Err(
-            "Steam is running but signed out, so it accepts launches and \
-             drops them. Nothing is wrong with the game, the Proton mapping or \
-             GreenBoost , the launch never gets past Steam.\n\n\
-             Open Steam and sign in, then launch again:  steam steam://open/main"
-                .to_string());
+        return Err(SIGNED_OUT_MSG.to_string());
     }
 
-    if silent && !steam_was_up {
+    // Only spawn a client when none exists at all , `steam_was_up` (handoff
+    // readiness) is the wrong gate here: a client that is up but still
+    // booting or self-updating is not "no client running", and spawning a
+    // second `steam` process on top of it is exactly the bug this fixes
+    // (confirmed 2026-09-03: a `-silent` client was still creating its pipe
+    // when the old check called it ready, so the next `steam -applaunch`
+    // call became a second full client instead of an IPC request).
+    if silent && !steam_is_running() {
         match Command::new("steam").arg("-silent").spawn() {
-            Ok(_) => {
-                prep_notes.push("started Steam minimised to tray".to_string());
-                // Steam needs to be far enough up to accept -applaunch.
-                for _ in 0..40 {
-                    if steam_is_running() { break; }
-                    std::thread::sleep(std::time::Duration::from_millis(500));
-                }
-            }
+            Ok(_) => prep_notes.push("started Steam minimised to tray".to_string()),
             Err(e) => prep_notes.push(format!("warn: could not start Steam: {e}")),
+        }
+    }
+
+    // Wait for the client to finish its own startup handoff (steam.pid +
+    // steam.pipe) before sending it anything , applies whether we just
+    // spawned a client above or one was already booting when this function
+    // was called. 90s: a cold start with a client self-update measured 19s
+    // just to reach [Logged On] here; the update path itself runs longer.
+    if !steam_was_up {
+        const STEAM_HANDOFF_BUDGET_S: u64 = 90;
+        let deadline = std::time::Instant::now()
+            + std::time::Duration::from_secs(STEAM_HANDOFF_BUDGET_S);
+        loop {
+            if steam_accepts_launches() {
+                if steam_login_state() == SteamLogin::Off {
+                    return Err(SIGNED_OUT_MSG.to_string());
+                }
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(format!(
+                    "Steam hasn't finished starting up after {STEAM_HANDOFF_BUDGET_S}s \
+                     (still booting or updating), so the launch was never sent , \
+                     nothing is wrong with the game or the Proton mapping.\n\n\
+                     Check Steam's own window or tray icon, then launch again once it settles."
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
         }
     }
 
@@ -3318,6 +3350,55 @@ fn steam_is_running() -> bool {
         }
     }
     false
+}
+
+/// Is a Steam client up AND able to take an `-applaunch` request right now?
+///
+/// `steam_is_running()` only asks "is some `steam` process alive" , true for
+/// a client that is still booting, mid self-update, or about to restart
+/// itself. `bin_steam.sh` (`STEAMCONFIG=~/.steam`) does not hand `-applaunch`
+/// to such a client: it forwards the request over `~/.steam/steam.pipe` to
+/// whichever process holds `~/.steam/steam.pid`, and only once that pid has
+/// actually claimed the pipe. A process that exists but hasn't reached that
+/// point yet looks "running" to the old check, so launch_game_ext used to
+/// send `-applaunch` straight into a booting client , which discards it as a
+/// startup argument instead of a launch request (confirmed 2026-09-03:
+/// `console-linux.txt` showed two consecutive "Steam Client launched with
+/// … -applaunch 2909400" restarts and no "Adding process … for gameID
+/// 2909400" ever followed; a second `steam` process was left running,
+/// fighting the first over `steam.pid`).
+///
+/// Both conditions must hold:
+/// - `~/.steam/steam.pid` names a pid whose `/proc/<pid>/comm` is `steam`
+///   (the same liveness check `steam_is_running()` does, but pinned to the
+///   pid the client itself claims, not any `steam`-named process).
+/// - `~/.steam/steam.pipe` exists and is a FIFO , the client only creates it
+///   after `bin_steam.sh`'s own readiness wait (`[[ ! -p "$STEAMCONFIG/steam.pipe" ]]`).
+fn steam_accepts_launches() -> bool {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let pid_path = format!("{home}/.steam/steam.pid");
+    let pipe_path = format!("{home}/.steam/steam.pipe");
+
+    let pid_text = std::fs::read_to_string(&pid_path).unwrap_or_default();
+    let pipe_is_fifo = std::fs::metadata(&pipe_path)
+        .map(|m| {
+            use std::os::unix::fs::FileTypeExt;
+            m.file_type().is_fifo()
+        })
+        .unwrap_or(false);
+    let comm_of_pid = pid_text.trim().parse::<u32>().ok().and_then(|pid| {
+        std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()
+    });
+
+    steam_handoff_ready(pid_text.trim(), pipe_is_fifo, comm_of_pid.as_deref())
+}
+
+/// Pure decision extracted from `steam_accepts_launches()` for unit testing ,
+/// same split as `login_state_from_log()` / `steam_login_state()`.
+fn steam_handoff_ready(pid_text: &str, pipe_is_fifo: bool, comm_of_pid: Option<&str>) -> bool {
+    if pid_text.trim().parse::<u32>().is_err() { return false; }
+    if !pipe_is_fifo { return false; }
+    comm_of_pid.map(|c| c.trim() == "steam").unwrap_or(false)
 }
 
 /// Push the Steam window out of the way after a launch. Best-effort by
@@ -4328,5 +4409,46 @@ mod steam_login_tests {
         assert_eq!(login_state_from_log(""), SteamLogin::Unknown);
         assert_eq!(login_state_from_log("IPv6 UDP connectivity test - TIMEOUT\n"),
                    SteamLogin::Unknown);
+    }
+}
+
+#[cfg(test)]
+mod steam_handoff_tests {
+    use super::*;
+
+    /// Exact state observed live 2026-09-03: a stale steam.pipe left over
+    /// from the previous session (mtime the day before), and steam.pid
+    /// naming a pid that belongs to the RIVAL client the old, too-loose
+    /// check had already spawned , not the one that created that pipe.
+    /// This must come back false: a live pid plus a live pipe that just
+    /// happen to both exist is not the same as one client owning both.
+    #[test]
+    fn a_pid_with_no_matching_process_is_not_ready() {
+        assert!(!steam_handoff_ready("32511", true, None));
+    }
+
+    #[test]
+    fn a_live_pid_with_no_pipe_yet_is_not_ready() {
+        // The exact shape of a client still booting: comm resolves, but
+        // bin_steam.sh has not created steam.pipe yet.
+        assert!(!steam_handoff_ready("32511", false, Some("steam")));
+    }
+
+    #[test]
+    fn a_pid_owned_by_something_other_than_steam_is_not_ready() {
+        assert!(!steam_handoff_ready("1", true, Some("systemd")));
+    }
+
+    #[test]
+    fn an_unparseable_pid_is_not_ready() {
+        assert!(!steam_handoff_ready("", true, Some("steam")));
+        assert!(!steam_handoff_ready("not-a-pid", true, Some("steam")));
+    }
+
+    #[test]
+    fn a_live_steam_pid_with_a_fifo_pipe_is_ready() {
+        assert!(steam_handoff_ready("32511", true, Some("steam")));
+        // Trailing newline, as read_to_string of a real steam.pid file has.
+        assert!(steam_handoff_ready("32511\n", true, Some("steam\n")));
     }
 }

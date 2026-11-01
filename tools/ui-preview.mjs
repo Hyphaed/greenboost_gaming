@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 
-const require = createRequire("/home/ferran/Dev/svg-animation-studio/apps/studio/package.json");
+const require = createRequire(`${process.env.STUDIO_DIR ?? `${process.env.HOME}/Dev/svg-animation-studio`}/apps/studio/package.json`);
 const { chromium } = require("playwright-core");
 const out = process.argv[2] ?? "/tmp/gb-ui"; const scenario = process.argv[3] ?? "ok";
 fs.mkdirSync(out, { recursive: true });

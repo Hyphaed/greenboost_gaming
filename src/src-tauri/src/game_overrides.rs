@@ -18,6 +18,23 @@ pub struct GameWrappers {
     pub gamescope: Vec<String>,  // empty = disabled; non-empty = gamescope args
 }
 
+/// Per-game game mode (gb_gaming/game_mode.py). Every field is optional so
+/// "unset" follows All Games; saving never drops the extension/unit lists a
+/// hand-written profile already carries.
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+pub struct GameModeOverride {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pause_extensions: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_screen_awake: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disable_extensions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stop_user_units: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct GameNisConfig {
     pub enabled:   bool,
@@ -71,6 +88,10 @@ pub struct GameOverrides {
     /// Override GREENBOOST_VK_PIPELINE_CACHE for this game. None = use global.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vk_pipeline_cache: Option<bool>,
+    /// Game mode (GNOME extensions off + screen kept awake while this game
+    /// runs). None = follow All Games.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_mode: Option<GameModeOverride>,
     /// Overlay a user-supplied directory of DLLs into the game's own exe
     /// directory at launch (symlinked, with any colliding shipped DLL backed
     /// up and restored on exit). GreenBoost never downloads, extracts, or

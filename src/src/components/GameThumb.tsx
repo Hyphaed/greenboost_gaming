@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { Icon } from "../icons";
 
@@ -12,6 +12,9 @@ function resolveSrc(image: string): string {
 
 export function GameThumb({ image, name, size }: { image?: string; name: string; size: number }) {
   const [err, setErr] = useState(false);
+  // A new image path (another game selected, or a rescan) deserves a fresh
+  // attempt; a failure for the previous path must not stick.
+  useEffect(() => setErr(false), [image]);
   const cls = size <= 38 ? "game-thumb" : "game-detail-thumb";
   const fallbackCls = size <= 38 ? "game-thumb-fallback" : "game-detail-thumb-fallback";
 

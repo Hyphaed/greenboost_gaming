@@ -16,7 +16,7 @@ changed" below for what changed at each step and what's still unverified.
 
 `KNOWN["nvngx_dlss.dll"]` and friends carry a floor of `(310, 8, 0, 0)`; the Streamline
 components carry `(2, 13, 0, 0)`. Both came from running `_read_pe_fileversion()` against a
-real Streamline 2.13 bundle on disk (`/home/ferran/Downloads/SL 2.13/`), not from a changelog
+real Streamline 2.13 bundle on disk (`~/Downloads/SL 2.13/`), not from a changelog
 or a guess. If you bump these again, do the same: read the actual file version out of a real
 downloaded bundle. `refresh_manifest()` and `scan_paths()` will keep widening the floor
 against whatever's newest in the cache regardless, so a stale constant here isn't fatal — it

@@ -34,8 +34,8 @@ export function CollapsibleSection({
         <span>{title}</span>
         {subtitle && (
           <span style={{
-            marginLeft: "auto", fontSize: 11, fontWeight: 400,
-            color: "#8a9ab0", textTransform: "none", letterSpacing: 0,
+            marginLeft: "auto", fontSize: 12, fontWeight: 400,
+            color: "var(--color-text-muted)", textTransform: "none", letterSpacing: 0,
           }}>{subtitle}</span>
         )}
       </button>
